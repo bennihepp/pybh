@@ -5,9 +5,8 @@ import numpy as np
 import cv2
 from unrealcv import Client
 from engine import BaseEngine
-from RLrecon import math_utils
-from RLrecon.contrib import transformations
-#from RLrecon import utils
+from pybh import math_utils
+from pybh.contrib import transformations
 
 
 class UnrealCVWrapper(BaseEngine):
@@ -18,7 +17,7 @@ class UnrealCVWrapper(BaseEngine):
     def __init__(self,
                  address=None,
                  port=None,
-                 image_scale_factor=0.5,
+                 image_scale_factor=1.0,
                  max_depth_distance=np.finfo(np.float).max,
                  max_depth_viewing_angle=math_utils.degrees_to_radians(90.),
                  max_request_trials=5,
@@ -59,6 +58,10 @@ class UnrealCVWrapper(BaseEngine):
     def close(self):
         """Close connection to UnrealCV"""
         self._cv_client.disconnect()
+
+    def unrealcv_client(self):
+        """Return underlying UnrealCV client"""
+        return self._cv_client
 
     def _unrealcv_request(self, request):
         """Send a request to UnrealCV. Automatically retry in case of timeout."""
@@ -136,8 +139,6 @@ class UnrealCVWrapper(BaseEngine):
 
     def get_focal_length(self):
         """Return focal length of camera"""
-        # # TODO: Focal length (and also projection matrix) should come from UnrealCV
-        # return 320. * self._image_scale_factor
         try:
             horz_fov = self.get_horizontal_field_of_view()
         except UnrealCVWrapper.Exception:
@@ -146,6 +147,11 @@ class UnrealCVWrapper(BaseEngine):
         width = self.get_width()
         focal_length = width / (2 * np.tan(horz_fov / 2.))
         return focal_length
+
+    def set_focal_length(self, focal_length):
+        """Set the focal length of camera"""
+        horz_fov = 2 * np.arctan(self.get_width() / (2 * focal_length))
+        self.set_horizontal_field_of_view(horz_fov)
 
     def get_intrinsics(self):
         """Return intrinsics of camera"""
@@ -345,14 +351,16 @@ class UnrealCVWrapper(BaseEngine):
     def set_pose_quat(self, pose, wait_until_set=False):
         """Set new pose as a tuple of location and orientation quaternion"""
         self.set_location(pose[0])
-        self.set_orientation_quat(pose[1])
         if wait_until_set:
             yaw, pitch, roll = transformations.euler_from_quaternion(pose[1], 'rzyx')
+            self.set_orientation_rpy(roll, pitch, yaw)
             start_time = time.time()
             while time.time() - start_time < self._request_timeout:
-                if self._is_location_set(pose[0]) and self._is_orientation_rpy_set(yaw, pitch, roll):
+                if self._is_location_set(pose[0]) and self._is_orientation_rpy_set(roll, pitch, yaw):
                     return
             raise self.Exception("UnrealCV: New pose was not set within time limit")
+        else:
+            self.set_orientation_quat(pose[1])
 
     def set_pose_rpy(self, pose, wait_until_set=False):
         """Set new pose as a tuple of location and orientation rpy"""
@@ -364,6 +372,30 @@ class UnrealCVWrapper(BaseEngine):
                 if self._is_location_set(pose[0]) and self._is_orientation_rpy_set(*pose[1]):
                     return
             raise self.Exception("UnrealCV: New pose was not set within time limit")
+
+    def enable_input(self):
+        """Enable input in Unreal Engine"""
+        self._unrealcv_request("vset /action/input/enable")
+
+    def disable_input(self):
+        """Disable input in Unreal Engine"""
+        self._unrealcv_request("vset /action/input/disable")
+
+    def get_objects(self):
+        """List object names in Unreal Engine"""
+        objects = self._unrealcv_request("vget /objects")
+        objects = [object_name.strip() for object_name in objects.split()]
+        return objects
+
+    def show_object(self, object_name):
+        """Show object in Unreal Engine"""
+        response = self._unrealcv_request("vset /object/{}/show".format(object_name))
+
+    def hide_object(self, object_name):
+        """Hide object in Unreal Engine"""
+        response = self._unrealcv_request("vset /object/{}/hide".format(object_name))
+        if response != "ok":
+            raise self.Exception("UnrealCV request failed: {}".format(response))
 
     def test(self):
         """Perform some tests"""

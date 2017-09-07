@@ -1,10 +1,9 @@
 from __future__ import print_function
 import time
 import numpy as np
-import rospy
-from RLrecon.contrib import transformations
-from RLrecon import math_utils
-from RLrecon.utils import Timer
+from pybh.contrib import transformations
+from pybh import math_utils
+from pybh.utils import Timer
 
 
 class BaseEngine(object):
@@ -178,8 +177,8 @@ class BaseEngine(object):
         # # cv2.imshow("depth image", depth_image / np.max(depth_image.flatten()))
         # cv2.waitKey(10)
         # t4 = timer.elapsed_seconds()
-        rospy.logdebug("Depth image: min={}, max={}".format(
-            np.min(depth_image.flatten()), np.max(depth_image.flatten())))
+        #print("Depth image: min={}, max={}".format(
+        #    np.min(depth_image.flatten()), np.max(depth_image.flatten())))
         if filter:
             normal_image = self.get_normal_image()
             # t5 = timer.elapsed_seconds()
@@ -189,8 +188,8 @@ class BaseEngine(object):
             # t6 = timer.elapsed_seconds()
             self.filter_depth_image(depth_image, normal_image, ray_directions, inplace=True)
             # t7 = timer.elapsed_seconds()
-            rospy.logdebug("Filtered depth image: min={}, max={}".format(
-                np.min(depth_image.flatten()), np.max(depth_image.flatten())))
+            #print("Filtered depth image: min={}, max={}".format(
+            #    np.min(depth_image.flatten()), np.max(depth_image.flatten())))
             # # For debugging. Show filtered depth image.
             # import cv2
             # depth_image_show = depth_image / 20.
@@ -199,7 +198,7 @@ class BaseEngine(object):
             # cv2.imshow('depth', depth_image_show)
             # cv2.waitKey(10)
         # Create pointcloud message
-        rospy.logdebug("Creating point cloud message")
+        #print("Creating point cloud message")
         points = self._create_points_from_depth_image(depth_image, focal_length)
         # t8 = timer.elapsed_seconds()
         # print("Timing of get_depth_point_cloud_rpy():")
