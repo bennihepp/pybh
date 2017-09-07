@@ -2,7 +2,7 @@
 
 from distutils.core import setup
 
-setup(name='RLrecon',
+setup(name='pybh',
       version='0.1',
       description='Personal python utilities',
       author='Benjamin Hepp',
