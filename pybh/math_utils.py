@@ -1,5 +1,5 @@
 import numpy as np
-from RLrecon.contrib import transformations
+from contrib import transformations
 
 
 def degrees_to_radians(degrees):
@@ -66,6 +66,22 @@ def convert_rpy_to_quat(orientation_rpy):
     roll, pitch, yaw = orientation_rpy
     quat = transformations.quaternion_from_euler(yaw, pitch, roll, 'rzyx')
     return quat
+
+
+def normalize_quaternion(quat):
+  """Return normalized quaternion (qx, qy, qz, qw)"""
+  quat_norm = np.sqrt(np.sum(quat ** 2))
+  return quat / quat_norm
+
+
+def invert_quaternion(quat):
+  """Rotate a given quaternion (qx, qy, qz, qw)"""
+  return transformations.quaternion_inverse(quat)
+
+
+def multiply_quaternion(quat1, quat2):
+    """Multiply two quaterions (qx, qy, qz, qw)"""
+    return transformations.quaternion_multiply(quat1, quat2)
 
 
 def rotate_vector_with_quaternion(quat, vec):
