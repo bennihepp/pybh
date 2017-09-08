@@ -118,12 +118,16 @@ class UnrealCVWrapper(BaseEngine):
             self.get_width()
         return self._height
 
-    def get_horizontal_field_of_view(self):
-        """Return the horizontal field of view of the camera"""
+    def get_horizontal_field_of_view_degrees(self):
+        """Return the horizontal field of view of the camera in degrees"""
         horz_fov_str = self._unrealcv_request('vget /camera/0/horizontal_fieldofview')
-        horz_fov = float(horz_fov_str)
-        # Convert to radians
-        horz_fov = math_utils.degrees_to_radians(horz_fov)
+        horz_fov_degrees = float(horz_fov_str)
+        return horz_fov_degrees
+
+    def get_horizontal_field_of_view(self):
+        """Return the horizontal field of view of the camera in radians"""
+        horz_fov_degrees = self.get_horizontal_field_of_view_degrees()
+        horz_fov = math_utils.degrees_to_radians(horz_fov_degrees)
         return horz_fov
 
     def set_horizontal_field_of_view(self, horz_fov):
@@ -158,8 +162,8 @@ class UnrealCVWrapper(BaseEngine):
         intrinsics = np.zeros((3, 3))
         intrinsics[0, 0] = self.get_focal_length()
         intrinsics[1, 1] = self.get_focal_length()
-        intrinsics[0, 2] = self.get_width() / 2.0
-        intrinsics[1, 2] = self.get_height() / 2.0
+        intrinsics[0, 2] = (self.get_width() - 1) / 2.0
+        intrinsics[1, 2] = (self.get_height() - 1) / 2.0
         intrinsics[2, 2] = 1.0
         return intrinsics
 
