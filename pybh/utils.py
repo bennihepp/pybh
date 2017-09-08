@@ -3,13 +3,23 @@ import time
 import argparse
 
 
+def fail(message, exit_code=1):
+  sys.stderr.write(message + "\n")
+  sys.exit(exit_code)
+
+
 def argparse_bool(v):
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
+    if type(v) == str:
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+    elif type(v) == bool:
+        return v
     else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+        raise ValueError("Expected string or boolean value. Got type {}".format(type(v)))
 
 
 def print_debug(variable_name):
