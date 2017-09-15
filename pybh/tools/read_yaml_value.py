@@ -2,7 +2,7 @@ from __future__ import print_function
 
 import argparse
 import yaml
-from pybh.utils import fail, argparse_bool
+from pybh.utils import fail, argparse_bool, convert_string_to_array
 
 
 TYPE_STR_MAPPING = {
@@ -17,7 +17,8 @@ def run(args):
     with file(args.file, "r") as fin:
         content = yaml.load(fin)
 
-        keys = args.key.strip().split(".")
+        # keys = args.key.strip().split(".")
+        keys = convert_string_to_array(args.key, sep=".")
         assert(len(keys) > 0)
         for i, key in enumerate(keys):
             if key not in content:
@@ -30,8 +31,10 @@ def run(args):
 
         if args.index is not None:
             if type(content) is not list:
-                content = [x.strip() for x in content.split(",")]
-            indices = [int(x) for x in args.index.split(",")]
+                # content = [x.strip() for x in content.split(",")]
+                content = convert_string_to_array(content, sep=",")
+            # indices = [int(x) for x in args.index.split(",")]
+            indices = convert_string_to_array(args.index, sep=",", value_type=int)
             for i, index in enumerate(indices):
                 if index >= len(content):
                     fail("ERROR: Index #{} ({}) out of bounds for value ({}) of type ({})".format(
