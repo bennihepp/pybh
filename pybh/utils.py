@@ -4,8 +4,19 @@ import argparse
 
 
 def fail(message, exit_code=1):
-  sys.stderr.write(message + "\n")
-  sys.exit(exit_code)
+    sys.stderr.write(message + "\n")
+    sys.exit(exit_code)
+
+
+def convert_string_to_array(arg, sep=None, value_type=None, value_fn=None, do_strip=True):
+    array = [x.strip() for x in arg.split(sep)]
+    if do_strip:
+        array = [x.strip() for x in array]
+    if value_type is not None:
+        array = [value_type(x) for x in array]
+    if value_fn is not None:
+        array = [value_fn(x) for x in array]
+    return array
 
 
 def argparse_bool(v):
