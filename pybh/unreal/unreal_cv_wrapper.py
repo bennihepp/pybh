@@ -1,5 +1,6 @@
 import os
 import time
+import struct
 from cStringIO import StringIO
 import numpy as np
 import cv2
@@ -46,22 +47,90 @@ class UnrealCVWrapper(BaseEngine):
         if connect:
             self.connect()
 
-    def connect(self):
-        """Open connection to UnrealCV"""
-        if self._cv_client.isconnected():
-            print("WARNING: Already connected to UnrealCV")
-        else:
-            self._cv_client.connect(self._connect_timeout)
-            if not self._cv_client.isconnected():
-                raise(self.Exception("Unable to connect to UnrealCV"))
+    def _get_location_from_unreal_location(self, unreal_location):
+        """Convert location in Unreal Engine coordinate frame to right-handed coordinate frame in meters"""
+        # Convert left-handed Unreal system to right-handed system
+        location = math_utils.convert_xyz_from_left_to_right_handed(unreal_location)
+        # Convert location from Unreal (cm) to meters
+        location *= 0.01
+        return location
 
-    def close(self):
-        """Close connection to UnrealCV"""
-        self._cv_client.disconnect()
+    def _get_unreal_location_from_location(self, location):
+        """Convert location in right-handed coordinate frame in meters to Unreal Engine location"""
+        unreal_location = math_utils.convert_xyz_from_right_to_left_handed(location)
+        # Convert meters to Unreal (cm)
+        unreal_location *= 100
+        return unreal_location
 
-    def unrealcv_client(self):
-        """Return underlying UnrealCV client"""
-        return self._cv_client
+    def _get_euler_rpy_from_unreal_pyr(self, unreal_pyr):
+        """Convert rotation in Unreal Engine angles to euler angles in radians"""
+        pitch, yaw, roll = [v * np.pi / 180. for v in unreal_pyr]
+        euler_rpy = np.array([roll, pitch, yaw])
+        roll, pitch, yaw = math_utils.convert_rpy_from_left_to_right_handed(euler_rpy)
+        if pitch <= -np.pi:
+            pitch += 2 * np.pi
+        elif pitch > np.pi:
+            pitch -= 2 * np.pi
+        euler_rpy = np.array([roll, pitch, yaw])
+        return euler_rpy
+
+    def _get_unreal_pyr_from_euler_rpy(self, euler_rpy):
+        """Convert rotation in euler angles in radians to Unreal Engine angles"""
+        euler_rpy = [v * 180. / np.pi for v in euler_rpy]
+        unreal_roll, unreal_pitch, unreal_yaw = math_utils.convert_rpy_from_right_to_left_handed(euler_rpy)
+        return [unreal_pitch, unreal_yaw, unreal_roll]
+
+    def _get_quaternion_from_euler_rpy(self, euler_rpy):
+        """Convert euler angles in radians to quaternion"""
+        roll, pitch, yaw = euler_rpy
+        quat = transformations.quaternion_from_euler(yaw, pitch, roll, 'rzyx')
+        return quat
+
+    def _is_location_set(self, location):
+        current_location = self.get_location()
+        if np.all(np.abs(current_location - location) < self._location_tolerance):
+            return True
+        return False
+
+    def _is_orientation_rpy_set(self, roll, pitch, yaw):
+        current_roll, current_pitch, current_yaw = self.get_orientation_rpy()
+        if abs(current_roll - roll) < self._orientation_tolerance \
+                and abs(current_pitch - pitch) < self._orientation_tolerance \
+                and abs(current_yaw - yaw) < self._orientation_tolerance:
+            return True
+        return False
+
+    def _is_pose_rpy_set(self, pose):
+        location = pose[0]
+        roll, pitch, yaw = pose[1]
+        current_location, current_euler_rpy = self.get_pose_rpy()
+        current_roll, current_pitch, current_yaw = current_euler_rpy
+        print("Desired:", location, roll, pitch, yaw)
+        print("Current:", current_location, current_roll, current_pitch, current_yaw)
+        if np.all(np.abs(current_location - location) < self._location_tolerance) \
+                and abs(current_roll - roll) < self._orientation_tolerance \
+                and abs(current_pitch - pitch) < self._orientation_tolerance \
+                and abs(current_yaw - yaw) < self._orientation_tolerance:
+            return True
+        return False
+
+    def _read_npy(self, npy_io):
+        return np.load(npy_io)
+
+    def _read_npy_from_str(self, npy_str):
+        npy_io = StringIO(npy_str)
+        return self._read_npy(npy_io)
+
+    def _ray_distance_to_depth_image(self, ray_distance_image, focal_length):
+        """Convert a ray-distance image to a plane depth image"""
+        height = ray_distance_image.shape[0]
+        width = ray_distance_image.shape[1]
+        x_c = np.float(width) / 2 - 1
+        y_c = np.float(height) / 2 - 1
+        columns, rows = np.meshgrid(np.linspace(0, width - 1, num=width), np.linspace(0, height - 1, num=height))
+        dist_from_center = ((rows - y_c) ** 2 + (columns - x_c) ** 2) ** (0.5)
+        depth_image = ray_distance_image / (1 + (dist_from_center / focal_length) ** 2) ** (0.5)
+        return depth_image
 
     def _unrealcv_request(self, request):
         """Send a request to UnrealCV. Automatically retry in case of timeout."""
@@ -79,6 +148,23 @@ class UnrealCVWrapper(BaseEngine):
         self._request_trials = 0
         return result
 
+    def connect(self):
+        """Open connection to UnrealCV"""
+        if self._cv_client.isconnected():
+            print("WARNING: Already connected to UnrealCV")
+        else:
+            self._cv_client.connect(self._connect_timeout)
+            if not self._cv_client.isconnected():
+                raise(self.Exception("Unable to connect to UnrealCV"))
+
+    def close(self):
+        """Close connection to UnrealCV"""
+        self._cv_client.disconnect()
+
+    def unrealcv_client(self):
+        """Return underlying UnrealCV client"""
+        return self._cv_client
+
     def scale_image(self, image, scale_factor=None, interpolation_mode=cv2.INTER_CUBIC):
         """Scale an image to the desired size"""
         if scale_factor is None:
@@ -92,17 +178,6 @@ class UnrealCVWrapper(BaseEngine):
     def scale_image_with_nearest_interpolation(self, image, scale_factor=None):
         """Scale an image to the desired size using 'nearest' interpolation"""
         return self.scale_image(image, scale_factor=scale_factor, interpolation_mode=cv2.INTER_NEAREST)
-
-    def _ray_distance_to_depth_image(self, ray_distance_image, focal_length):
-        """Convert a ray-distance image to a plane depth image"""
-        height = ray_distance_image.shape[0]
-        width = ray_distance_image.shape[1]
-        x_c = np.float(width) / 2 - 1
-        y_c = np.float(height) / 2 - 1
-        columns, rows = np.meshgrid(np.linspace(0, width - 1, num=width), np.linspace(0, height - 1, num=height))
-        dist_from_center = ((rows - y_c) ** 2 + (columns - x_c) ** 2) ** (0.5)
-        depth_image = ray_distance_image / (1 + (dist_from_center / focal_length) ** 2) ** (0.5)
-        return depth_image
 
     def get_width(self):
         """Return width of image plane"""
@@ -225,8 +300,7 @@ class UnrealCVWrapper(BaseEngine):
     def get_ray_distance_image(self, scale_factor=None):
         """Return the current ray-distance image"""
         img_str = self._unrealcv_request('vget /camera/0/depth npy')
-        img_str_io = StringIO(img_str)
-        ray_distance_image = np.load(img_str_io)
+        ray_distance_image = self._read_npy_from_str(img_str)
         ray_distance_image = self.scale_image_with_nearest_interpolation(ray_distance_image, scale_factor)
         return ray_distance_image
 
@@ -252,33 +326,54 @@ class UnrealCVWrapper(BaseEngine):
         depth_image = self._ray_distance_to_depth_image_by_file(ray_distance_image, self.get_focal_length())
         return depth_image
 
+    def get_rgb_ray_distance_normal_images(self, scale_factor=None):
+        """Return the current rgb, ray-distance and normal image"""
+        resp_str = self._unrealcv_request('vget /camera/0/lit_depth_normal npy')
+        resp_io = StringIO(resp_str)
+        fmt = "I"
+        fmt_size = struct.calcsize(fmt)
+        rgb_img_bytes = struct.unpack(fmt, resp_io.read(fmt_size))[0]
+        rgb_image = self._read_npy(resp_io)
+        assert(rgb_image.nbytes == rgb_img_bytes)
+        rgb_image = self.scale_image(rgb_image, scale_factor)
+        ray_distance_img_bytes = struct.unpack(fmt, resp_io.read(fmt_size))[0]
+        ray_distance_image = self._read_npy(resp_io)
+        assert(ray_distance_image.nbytes == ray_distance_img_bytes)
+        ray_distance_image = self.scale_image_with_nearest_interpolation(ray_distance_image, scale_factor)
+        normal_img_bytes = struct.unpack(fmt, resp_io.read(fmt_size))[0]
+        normal_image = self._read_npy(resp_io)
+        assert(normal_image.nbytes == normal_img_bytes)
+        normal_image = self.scale_image_with_nearest_interpolation(normal_image, scale_factor)
+        return rgb_image, ray_distance_image, normal_image
+
+    def get_rgb_depth_normal_images(self, scale_factor=None):
+        """Return the current rgb, depth and normal image"""
+        # timer = utils.Timer()
+        rgb_image, ray_distance_image, normal_image = self.get_rgb_ray_distance_normal_images(scale_factor)
+        depth_image = self._ray_distance_to_depth_image(ray_distance_image, self.get_focal_length())
+        # print("get_depth_image() took {}".format(timer.elapsed_seconds())
+        return rgb_image, depth_image, normal_image
+
     def get_location(self):
         """Return the current location in meters as [x, y, z]"""
         location_str = self._unrealcv_request('vget /camera/0/location')
-        location_unreal = np.array([float(v) for v in location_str.split()])
-        # Convert location from Unreal (cm) to meters
-        location_unreal *= 0.01
-        # Convert left-handed Unreal system to right-handed system
-        location = math_utils.convert_xyz_from_left_to_right_handed(location_unreal)
+        unreal_location = np.array([float(v) for v in location_str.split()])
+        assert(len(unreal_location) == 3)
+        location = self._get_location_from_unreal_location(unreal_location)
         return location
 
     def get_orientation_rpy(self):
         """Return the current orientation in radians as [roll, pitch, yaw]"""
         orientation_str = self._unrealcv_request('vget /camera/0/rotation')
-        pitch, yaw, roll = [float(v) * np.pi / 180. for v in orientation_str.split()]
-        euler_rpy = np.array([roll, pitch, yaw])
-        roll, pitch, yaw = math_utils.convert_rpy_from_left_to_right_handed(euler_rpy)
-        if pitch <= -np.pi:
-            pitch += 2 * np.pi
-        elif pitch > np.pi:
-            pitch -= 2 * np.pi
-        euler_rpy = np.array([roll, pitch, yaw])
+        unreal_pyr = [float(v) for v in orientation_str.split()]
+        assert(len(unreal_pyr) == 3)
+        euler_rpy = self._get_euler_rpy_from_unreal_pyr(unreal_pyr)
         return euler_rpy
 
     def get_orientation_quat(self):
         """Return the current orientation quaterion quat = [w, x, y, z]"""
-        [roll, pitch, yaw] = self.get_orientation_rpy()
-        quat = transformations.quaternion_from_euler(yaw, pitch, roll, 'rzyx')
+        euler_rpy = self.get_orientation_rpy()
+        quat = self._get_quaternion_from_euler_rpy(euler_rpy)
 
         # # Transformation test for debugging
         # transform_mat = transformations.quaternion_matrix(quat)
@@ -291,25 +386,33 @@ class UnrealCVWrapper(BaseEngine):
 
         return quat
 
-    def get_pose(self):
-        """Return the current pose as a tuple of location and orientation quaternion"""
-        return self.get_location(), self.get_orientation_quat()
+    def get_pose_rpy(self):
+        """Return the current pose as a tuple of location and orientation rpy"""
+        # return self.get_location(), self.get_orientation_quat()
+        pose_str = self._unrealcv_request('vget /camera/0/pose')
+        pose_unreal = np.array([float(v) for v in pose_str.split()])
+        assert(len(pose_unreal) == 6)
 
-    def _is_location_set(self, location):
-        current_location = self.get_location()
-        if np.all(np.abs(current_location - location) < self._location_tolerance):
-            return True
-        return False
+        unreal_location = pose_unreal[:3]
+        location = self._get_location_from_unreal_location(unreal_location)
+
+        unreal_pyr = pose_unreal[3:]
+        euler_rpy = self._get_euler_rpy_from_unreal_pyr(unreal_pyr)
+
+        return location, euler_rpy
+
+    def get_pose_quat(self):
+        """Return the current pose as a tuple of location and orientation quaternion"""
+        location, euler_rpy = self.get_pose_rpy()
+        quat = self._get_quaternion_from_euler_rpy(euler_rpy)
+        return location, quat
 
     def set_location(self, location, wait_until_set=False):
         """Set new location in meters as [x, y, z]"""
-        # Convert right-handed system to left-handed Unreal system
-        location_unreal = math_utils.convert_xyz_from_right_to_left_handed(location)
-        # Convert meters to Unreal (cm)
-        location_unreal *= 100
+        unreal_location = self._get_unreal_location_from_location(location)
         # UnrealCV cannot handle scientific notation so we use :f format specifier
         request_str = 'vset /camera/0/location {:f} {:f} {:f}'.format(
-            location_unreal[0], location_unreal[1], location_unreal[2])
+            unreal_location[0], unreal_location[1], unreal_location[2])
         # print("Sending location request: {}".format(request_str))
         response = self._unrealcv_request(request_str)
         if response != "ok":
@@ -321,20 +424,12 @@ class UnrealCVWrapper(BaseEngine):
                     return
             raise self.Exception("UnrealCV: New orientation was not set within time limit")
 
-    def _is_orientation_rpy_set(self, roll, pitch, yaw):
-        current_roll, current_pitch, current_yaw = self.get_orientation_rpy()
-        if abs(current_roll - roll) < self._orientation_tolerance \
-                and abs(current_pitch - pitch) < self._orientation_tolerance \
-                and abs(current_yaw - yaw) < self._orientation_tolerance:
-            return True
-        return False
-
     def set_orientation_rpy(self, roll, pitch, yaw, wait_until_set=False):
         """Set new orientation in radians"""
-        roll, pitch, yaw = math_utils.convert_rpy_from_right_to_left_handed([roll, pitch, yaw])
+        unreal_pitch, unreal_yaw, unreal_roll = self._get_unreal_pyr_from_euler_rpy([roll, pitch, yaw])
         # UnrealCV cannot handle scientific notation so we use :f format specifier
         request_str = 'vset /camera/0/rotation {:f} {:f} {:f}'.format(
-            pitch * 180 / np.pi, yaw * 180 / np.pi, roll * 180 / np.pi)
+            unreal_pitch, unreal_yaw, unreal_roll)
         # print("Sending orientation request: {}".format(request_str))
         response = self._unrealcv_request(request_str)
         if response != "ok":
@@ -352,30 +447,31 @@ class UnrealCVWrapper(BaseEngine):
         yaw, pitch, roll = transformations.euler_from_quaternion(quat, 'rzyx')
         self.set_orientation_rpy(roll, pitch, yaw)
 
+    def set_pose_rpy(self, pose, wait_until_set=False):
+        """Set new pose in meters as [x, y, z] and radians [roll, pitch, yaw]"""
+        location = pose[0]
+        euler_rpy = pose[1]
+        unreal_location = self._get_unreal_location_from_location(location)
+        unreal_pyr = self._get_unreal_pyr_from_euler_rpy(euler_rpy)
+        # UnrealCV cannot handle scientific notation so we use :f format specifier
+        request_str = 'vset /camera/0/pose {:f} {:f} {:f} {:f} {:f} {:f}'.format(
+            unreal_location[0], unreal_location[1], unreal_location[2],
+            unreal_pyr[0], unreal_pyr[1], unreal_pyr[2])
+        response = self._unrealcv_request(request_str)
+        if response != "ok":
+            raise self.Exception("UnrealCV request failed: {}".format(response))
+        if wait_until_set:
+            start_time = time.time()
+            while time.time() - start_time < self._request_timeout:
+                if self._is_pose_rpy_set((location, euler_rpy)):
+                    return
+            raise self.Exception("UnrealCV: New pose was not set within time limit")
+
     def set_pose_quat(self, pose, wait_until_set=False):
         """Set new pose as a tuple of location and orientation quaternion"""
-        self.set_location(pose[0])
-        if wait_until_set:
-            yaw, pitch, roll = transformations.euler_from_quaternion(pose[1], 'rzyx')
-            self.set_orientation_rpy(roll, pitch, yaw)
-            start_time = time.time()
-            while time.time() - start_time < self._request_timeout:
-                if self._is_location_set(pose[0]) and self._is_orientation_rpy_set(roll, pitch, yaw):
-                    return
-            raise self.Exception("UnrealCV: New pose was not set within time limit")
-        else:
-            self.set_orientation_quat(pose[1])
-
-    def set_pose_rpy(self, pose, wait_until_set=False):
-        """Set new pose as a tuple of location and orientation rpy"""
-        self.set_location(pose[0])
-        self.set_orientation_rpy(*pose[1])
-        if wait_until_set:
-            start_time = time.time()
-            while time.time() - start_time < self._request_timeout:
-                if self._is_location_set(pose[0]) and self._is_orientation_rpy_set(*pose[1]):
-                    return
-            raise self.Exception("UnrealCV: New pose was not set within time limit")
+        yaw, pitch, roll = transformations.euler_from_quaternion(pose[1], 'rzyx')
+        euler_rpy = [roll, pitch, yaw]
+        self.set_pose_rpy((pose[0], euler_rpy), wait_until_set)
 
     def enable_input(self):
         """Enable input in Unreal Engine"""
@@ -394,6 +490,8 @@ class UnrealCVWrapper(BaseEngine):
     def show_object(self, object_name):
         """Show object in Unreal Engine"""
         response = self._unrealcv_request("vset /object/{}/show".format(object_name))
+        if response != "ok":
+            raise self.Exception("UnrealCV request failed: {}".format(response))
 
     def hide_object(self, object_name):
         """Hide object in Unreal Engine"""
