@@ -14,7 +14,7 @@ TYPE_STR_MAPPING = {
 
 
 def run(args):
-    with file(args.file, "r") as fin:
+    with open(args.file, "r") as fin:
         content = yaml.load(fin)
 
         # keys = args.key.strip().split(".")

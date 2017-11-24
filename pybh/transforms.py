@@ -1,6 +1,6 @@
 import numpy as np
-from contrib import transformations
-import math_utils
+from .contrib import transformations
+from . import math_utils
 
 
 class RotationMatrix(object):
@@ -100,6 +100,9 @@ class Rotation(object):
 
     def apply_to(self, transform):
         return Rotation(math_utils.multiply_quaternion(self._quaternion, transform.quaternion))
+
+    def apply_to_quat(self, quat):
+        return math_utils.multiply_quaternion(self._quaternion, quat)
 
     def apply_to_vector(self, vec):
         assert(len(vec) == 3)

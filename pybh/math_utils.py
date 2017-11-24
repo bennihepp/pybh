@@ -1,5 +1,5 @@
 import numpy as np
-from contrib import transformations
+from .contrib import transformations
 
 
 def degrees_to_radians(degrees):
@@ -18,14 +18,73 @@ class BoundingBox(object):
         self._min = np.array(min)
         self._max = np.array(max)
 
+    @staticmethod
+    def empty(dtype=np.float):
+        return BoundingBox(
+            np.array([1, 1, 1], dtype=dtype),
+            np.array([-1, -1, -1], dtype=dtype),
+        )
+
+    @staticmethod
+    def infinite(dtype=np.float):
+        return BoundingBox(
+            np.array([-np.inf, -np.inf, -np.inf], dtype=dtype),
+            np.array([np.inf, np.inf, np.inf], dtype=dtype))
+
+    @staticmethod
+    def max_extent(dtype=np.float):
+        min_value = - np.finfo(dtype).max
+        max_value = np.finfo(dtype).max
+        return BoundingBox(
+            np.array([min_value, min_value, min_value], dtype=dtype),
+            np.array([max_value, max_value, max_value], dtype=dtype))
+
+    @staticmethod
+    def from_center_and_extent(center, extent):
+        half_extent = 0.5 * extent
+        return BoundingBox(center - half_extent, center + half_extent)
+
     def minimum(self):
         return self._min
 
     def maximum(self):
         return self._max
 
+    def extent(self):
+        return self._max - self._min
+
+    def min_extent(self):
+        return np.min(self._max - self._min)
+
+    def max_extent(self):
+        return np.max(self._max - self._min)
+
     def contains(self, xyz):
-        return np.all(xyz >= self._min) and np.all(xyz <= self._max)
+        if isinstance(xyz, BoundingBox):
+            return np.all(xyz.minimum() >= self.minimum()) \
+                   and np.all(xyz.maximum() <= self.maximum())
+        else:
+            return np.all(xyz >= self._min) and np.all(xyz <= self._max)
+
+    def move(self, offset):
+        return BoundingBox(self._min + offset, self._max + offset)
+
+    def move_in_place(self, offset):
+        self._min += offset
+        self._max += offset
+        return self
+
+    def scale(self, factor):
+        center = 0.5 * (self._min + self._max)
+        extent = self._max - self._min
+        return BoundingBox.from_center_and_extent(center, factor * extent)
+
+    def scale_in_place(self, factor):
+        center = 0.5 * (self._min + self._max)
+        extent = self._max - self._min
+        self._min = center - factor * extent
+        self._max = center + factor * extent
+        return self
 
     def __str__(self):
         return "({}, {})".format(self.minimum(), self.maximum())
@@ -68,6 +127,12 @@ def convert_rpy_to_quat(orientation_rpy):
     return quat
 
 
+def convert_quat_to_rpy(quat):
+    """Convert quaternion to euler angles in radians"""
+    yaw, pitch, roll = transformations.euler_from_quaternion(quat, 'rzyx')
+    return roll, pitch, yaw
+
+
 def normalize_quaternion(quat):
   """Return normalized quaternion (qx, qy, qz, qw)"""
   quat_norm = np.sqrt(np.sum(quat ** 2))
@@ -100,44 +165,90 @@ def rotate_vector_with_rpy(orientation_rpy, vec):
     return rotate_vector_with_quaternion(quat, vec)
 
 
-def is_vector_equal(vec1, vec2, tolerance=1e-10):
-    """Compare if two vectors are equal (L1-norm) according to a tolerance"""
+def is_angle_equal(angle1, angle2, tolerance=1e-10):
+    """Compare if two angles in radians are equal according to a tolerance"""
+    d_angle = np.abs(angle1 - angle2)
+    d_angle = d_angle % (2 * np.pi)
+    assert(d_angle >= 0)
+    assert(d_angle < 2 * np.pi)
+    if d_angle > np.pi:
+        d_angle = 2 * np.pi - d_angle
+    return d_angle < tolerance
+
+
+def is_angle_equal_degrees(angle1, angle2, tolerance=1e-10):
+    """Compare if two angles in degrees are equal according to a tolerance"""
+    return is_angle_equal(degrees_to_radians(angle1), degrees_to_radians(angle2), tolerance)
+
+
+def is_vector_equal_cwise(vec1, vec2, tolerance=1e-10):
+    """Compare if two vectors are equal component-wise according to a tolerance"""
     return np.all(np.abs(vec1 - vec2) <= tolerance)
+
+
+def is_vector_equal(vec1, vec2, tolerance=1e-10):
+    """Compare if two vectors are equal (L2-norm) according to a tolerance"""
+    return np.linalg.norm(vec1 - vec2) <= tolerance
 
 
 def is_quaternion_equal(quat1, quat2, tolerance=1e-10):
     """Compare if two quaternions are equal
 
-    This depends on L1-norm. A better way would be to use the angular difference
+    This depends on component-wise comparison. A better way would be to use the angular difference
     """
-    return is_vector_equal(quat1, quat2, tolerance) \
-        or is_vector_equal(quat1, -quat2, tolerance)
+    return is_vector_equal_cwise(quat1, quat2, tolerance) \
+        or is_vector_equal_cwise(quat1, -quat2, tolerance)
 
 
-class SinglePassMeanAndVariance(object):
+class SinglePassStatistics(object):
 
-    def __init__(self, size=None):
-        self._mean = np.zeros(size)
-        self._variance_acc = np.zeros(size)
+    def __init__(self, size=None, dtype=np.float):
+        self._mean = np.zeros(size, dtype=dtype)
+        self._variance_acc = np.zeros(size, dtype=dtype)
+        self._min = None
+        self._max = None
         self._N = 0
 
     def add_value(self, value):
+        if self._N == 0:
+            self._min = value
+            self._max = value
         self._N += 1
         prev_mean = self._mean
         self._mean += (value - self._mean) / self._N
         self._variance_acc += (value - self._mean) * (value - prev_mean)
+        self._min = np.minimum(value, self._min)
+        self._max = np.maximum(value, self._max)
+
+    def add_values(self, values):
+        raise NotImplementedError()
+        # self._N += len(values)
+        # prev_mean = self._mean
+        # self._mean += (np.sum(values) - len(values) * self._mean) / self._N
+        # Do variance calculation
+        # self._variance_acc += (value - self._mean) * (value - prev_mean)
+        # self._min = min(self._min, np.min(value))
+        # self._max = max(self._max, np.max(value))
 
     @property
     def mean(self):
-        return self._mean
+        return np.asarray(self._mean)
 
     @property
     def variance(self):
-        return self._variance_acc / float(self._N - 1)
+        return np.asarray(self._variance_acc / float(self._N - 1))
 
     @property
     def stddev(self):
-        return np.sqrt(self.variance)
+        return np.asarray(np.sqrt(self.variance))
+
+    @property
+    def min(self):
+        return np.asarray(self._min)
+
+    @property
+    def max(self):
+        return np.asarray(self._max)
 
     @property
     def num_samples(self):

@@ -1,16 +1,22 @@
 import os
 import time
-import struct
-from cStringIO import StringIO
+import sys
+try:
+    from cStringIO import StringIO
+except:
+    from io import BytesIO
 import numpy as np
 import cv2
 from unrealcv import Client
-from engine import BaseEngine
+from .engine import BaseEngine
 from pybh import math_utils
 from pybh.contrib import transformations
 
 
 class UnrealCVWrapper(BaseEngine):
+
+    INTER_NEAREST = cv2.INTER_NEAREST
+    INTER_CUBIC = cv2.INTER_CUBIC
 
     class Exception(RuntimeError):
         pass
@@ -24,7 +30,7 @@ class UnrealCVWrapper(BaseEngine):
                  max_request_trials=5,
                  request_timeout=5.0,
                  location_tolerance=1e-3,
-                 orientation_tolerance=1e-3,
+                 orientation_tolerance=1e-2,
                  connect=True,
                  connect_wait_time=5.0,
                  connect_timeout=5.0):
@@ -94,9 +100,9 @@ class UnrealCVWrapper(BaseEngine):
 
     def _is_orientation_rpy_set(self, roll, pitch, yaw):
         current_roll, current_pitch, current_yaw = self.get_orientation_rpy()
-        if abs(current_roll - roll) < self._orientation_tolerance \
-                and abs(current_pitch - pitch) < self._orientation_tolerance \
-                and abs(current_yaw - yaw) < self._orientation_tolerance:
+        if math_utils.is_angle_equal(current_roll, roll, self._orientation_tolerance) \
+                and math_utils.is_angle_equal(current_pitch, pitch, self._orientation_tolerance) \
+                and math_utils.is_angle_equal(current_yaw, yaw, self._orientation_tolerance):
             return True
         return False
 
@@ -105,20 +111,23 @@ class UnrealCVWrapper(BaseEngine):
         roll, pitch, yaw = pose[1]
         current_location, current_euler_rpy = self.get_pose_rpy()
         current_roll, current_pitch, current_yaw = current_euler_rpy
-        print("Desired:", location, roll, pitch, yaw)
-        print("Current:", current_location, current_roll, current_pitch, current_yaw)
+        # print("Desired pose:", location, roll, pitch, yaw)
+        # print("Current pose:", current_location, current_roll, current_pitch, current_yaw)
         if np.all(np.abs(current_location - location) < self._location_tolerance) \
-                and abs(current_roll - roll) < self._orientation_tolerance \
-                and abs(current_pitch - pitch) < self._orientation_tolerance \
-                and abs(current_yaw - yaw) < self._orientation_tolerance:
+                and math_utils.is_angle_equal(current_roll, roll, self._orientation_tolerance) \
+                and math_utils.is_angle_equal(current_pitch, pitch, self._orientation_tolerance) \
+                and math_utils.is_angle_equal(current_yaw, yaw, self._orientation_tolerance):
             return True
         return False
 
     def _read_npy(self, npy_io):
         return np.load(npy_io)
 
-    def _read_npy_from_str(self, npy_str):
-        npy_io = StringIO(npy_str)
+    def _read_npy_from_bytes(self, npy_bytes):
+        if sys.version_info.major == 3:
+            npy_io = BytesIO(npy_bytes)
+        else:
+            npy_io = StringIO(npy_bytes)
         return self._read_npy(npy_io)
 
     def _ray_distance_to_depth_image(self, ray_distance_image, focal_length):
@@ -134,6 +143,8 @@ class UnrealCVWrapper(BaseEngine):
 
     def _unrealcv_request(self, request):
         """Send a request to UnrealCV. Automatically retry in case of timeout."""
+        if type(request) is str:
+            request = request.encode("utf-8", "ignore")
         result = None
         while result is None:
             self._request_trials += 1
@@ -165,7 +176,7 @@ class UnrealCVWrapper(BaseEngine):
         """Return underlying UnrealCV client"""
         return self._cv_client
 
-    def scale_image(self, image, scale_factor=None, interpolation_mode=cv2.INTER_CUBIC):
+    def scale_image(self, image, scale_factor=None, interpolation_mode=INTER_CUBIC):
         """Scale an image to the desired size"""
         if scale_factor is None:
             scale_factor = self._image_scale_factor
@@ -177,14 +188,14 @@ class UnrealCVWrapper(BaseEngine):
 
     def scale_image_with_nearest_interpolation(self, image, scale_factor=None):
         """Scale an image to the desired size using 'nearest' interpolation"""
-        return self.scale_image(image, scale_factor=scale_factor, interpolation_mode=cv2.INTER_NEAREST)
+        return self.scale_image(image, scale_factor=scale_factor, interpolation_mode=self.INTER_NEAREST)
 
     def get_width(self):
         """Return width of image plane"""
         if self._width is None:
-            rgb_image = self.get_rgb_image()
-            self._height = rgb_image.shape[0]
-            self._width = rgb_image.shape[1]
+            image = self.get_ray_distance_image()
+            self._height = image.shape[0]
+            self._width = image.shape[1]
         return self._width
 
     def get_height(self):
@@ -195,8 +206,8 @@ class UnrealCVWrapper(BaseEngine):
 
     def get_horizontal_field_of_view_degrees(self):
         """Return the horizontal field of view of the camera in degrees"""
-        horz_fov_str = self._unrealcv_request('vget /camera/0/horizontal_fieldofview')
-        horz_fov_degrees = float(horz_fov_str)
+        horz_fov_bytes = self._unrealcv_request(b'vget /camera/0/horizontal_fieldofview')
+        horz_fov_degrees = float(horz_fov_bytes)
         return horz_fov_degrees
 
     def get_horizontal_field_of_view(self):
@@ -209,7 +220,7 @@ class UnrealCVWrapper(BaseEngine):
         """Set the horizontal field of view of the camera in radians"""
         horz_fov = math_utils.radians_to_degrees(horz_fov)
         response = self._unrealcv_request('vset /camera/0/horizontal_fieldofview {:f}'.format(horz_fov))
-        if response != "ok":
+        if response != b"ok":
             raise self.Exception("UnrealCV request failed: {}".format(response))
 
     def get_image_scale_factor(self):
@@ -244,15 +255,15 @@ class UnrealCVWrapper(BaseEngine):
 
     def get_rgb_image(self, scale_factor=None):
         """Return the current RGB image"""
-        img_str = self._unrealcv_request('vget /camera/0/lit png')
-        img = np.fromstring(img_str, np.uint8)
+        img_bytes = self._unrealcv_request(b'vget /camera/0/lit png')
+        img = np.fromstring(img_bytes, np.uint8)
         rgb_image = cv2.imdecode(img, cv2.IMREAD_COLOR)
         rgb_image = self.scale_image(rgb_image, scale_factor)
         return rgb_image
 
     def get_rgb_image_by_file(self, scale_factor=None):
         """Return the current RGB image (transport via filesystem)"""
-        filename = self._unrealcv_request('vget /camera/0/lit lit.png')
+        filename = self._unrealcv_request(b'vget /camera/0/lit lit.png')
         rgb_image = cv2.imread(filename)
         rgb_image = self.scale_image(rgb_image, scale_factor)
         os.remove(filename)
@@ -260,8 +271,8 @@ class UnrealCVWrapper(BaseEngine):
 
     def get_normal_rgb_image(self, scale_factor=None):
         """Return the current normal image in RGB encoding (i.e. 128 is 0, 0 is -1, 255 is +1)"""
-        img_str = self._unrealcv_request('vget /camera/0/normal png')
-        img = np.fromstring(img_str, np.uint8)
+        img_bytes = self._unrealcv_request(b'vget /camera/0/normal png')
+        img = np.fromstring(img_bytes, np.uint8)
         normal_image = cv2.imdecode(img, cv2.IMREAD_COLOR)
         normal_image = self.scale_image_with_nearest_interpolation(normal_image, scale_factor)
         return normal_image
@@ -270,7 +281,7 @@ class UnrealCVWrapper(BaseEngine):
         """Return the current normal image in RGB encoding (i.e. 128 is 0, 0 is -1, 255 is +1)
         (transport via filesystem)
         """
-        filename = self._unrealcv_request('vget /camera/0/normal normal.png')
+        filename = self._unrealcv_request(b'vget /camera/0/normal normal.png')
         normal_image = cv2.imread(filename)
         normal_image = self.scale_image_with_nearest_interpolation(normal_image, scale_factor)
         os.remove(filename)
@@ -299,14 +310,14 @@ class UnrealCVWrapper(BaseEngine):
 
     def get_ray_distance_image(self, scale_factor=None):
         """Return the current ray-distance image"""
-        img_str = self._unrealcv_request('vget /camera/0/depth npy')
-        ray_distance_image = self._read_npy_from_str(img_str)
+        img_bytes = self._unrealcv_request(b'vget /camera/0/depth npy')
+        ray_distance_image = self._read_npy_from_bytes(img_bytes)
         ray_distance_image = self.scale_image_with_nearest_interpolation(ray_distance_image, scale_factor)
         return ray_distance_image
 
     def get_ray_distance_image_by_file(self, scale_factor=None):
         """Return the current ray-distance image (transport via filesystem)"""
-        filename = self._unrealcv_request('vget /camera/0/depth depth.exr')
+        filename = self._unrealcv_request(b'vget /camera/0/depth depth.exr')
         ray_distance_image = cv2.imread(filename, cv2.IMREAD_ANYDEPTH)
         ray_distance_image = self.scale_image_with_nearest_interpolation(ray_distance_image, scale_factor)
         os.remove(filename)
@@ -328,21 +339,16 @@ class UnrealCVWrapper(BaseEngine):
 
     def get_rgb_ray_distance_normal_images(self, scale_factor=None):
         """Return the current rgb, ray-distance and normal image"""
-        resp_str = self._unrealcv_request('vget /camera/0/lit_depth_normal npy')
-        resp_io = StringIO(resp_str)
-        fmt = "I"
-        fmt_size = struct.calcsize(fmt)
-        rgb_img_bytes = struct.unpack(fmt, resp_io.read(fmt_size))[0]
+        resp_bytes = self._unrealcv_request(b'vget /camera/0/lit_depth_normal npy')
+        if sys.version_info.major == 3:
+            resp_io = BytesIO(resp_bytes)
+        else:
+            resp_io = StringIO(resp_bytes)
         rgb_image = self._read_npy(resp_io)
-        assert(rgb_image.nbytes == rgb_img_bytes)
         rgb_image = self.scale_image(rgb_image, scale_factor)
-        ray_distance_img_bytes = struct.unpack(fmt, resp_io.read(fmt_size))[0]
         ray_distance_image = self._read_npy(resp_io)
-        assert(ray_distance_image.nbytes == ray_distance_img_bytes)
         ray_distance_image = self.scale_image_with_nearest_interpolation(ray_distance_image, scale_factor)
-        normal_img_bytes = struct.unpack(fmt, resp_io.read(fmt_size))[0]
         normal_image = self._read_npy(resp_io)
-        assert(normal_image.nbytes == normal_img_bytes)
         normal_image = self.scale_image_with_nearest_interpolation(normal_image, scale_factor)
         return rgb_image, ray_distance_image, normal_image
 
@@ -354,18 +360,32 @@ class UnrealCVWrapper(BaseEngine):
         # print("get_depth_image() took {}".format(timer.elapsed_seconds())
         return rgb_image, depth_image, normal_image
 
+    def get_vis_depth_image(self, scale_factor=None):
+        """Return the current vis-depth image"""
+        img_bytes = self._unrealcv_request(b'vget /camera/0/vis_depth npy')
+        depth_image = self._read_npy_from_bytes(img_bytes)
+        depth_image = self.scale_image_with_nearest_interpolation(depth_image, scale_factor)
+        return depth_image
+
+    def get_plane_depth_image(self, scale_factor=None):
+        """Return the current plane-depth image"""
+        img_bytes = self._unrealcv_request(b'vget /camera/0/plane_depth npy')
+        depth_image = self._read_npy_from_bytes(img_bytes)
+        depth_image = self.scale_image_with_nearest_interpolation(depth_image, scale_factor)
+        return depth_image
+
     def get_location(self):
         """Return the current location in meters as [x, y, z]"""
-        location_str = self._unrealcv_request('vget /camera/0/location')
-        unreal_location = np.array([float(v) for v in location_str.split()])
+        location_bytes = self._unrealcv_request(b'vget /camera/0/location')
+        unreal_location = np.array([float(v) for v in location_bytes.split()])
         assert(len(unreal_location) == 3)
         location = self._get_location_from_unreal_location(unreal_location)
         return location
 
     def get_orientation_rpy(self):
         """Return the current orientation in radians as [roll, pitch, yaw]"""
-        orientation_str = self._unrealcv_request('vget /camera/0/rotation')
-        unreal_pyr = [float(v) for v in orientation_str.split()]
+        orientation_bytes = self._unrealcv_request(b'vget /camera/0/rotation')
+        unreal_pyr = [float(v) for v in orientation_bytes.split()]
         assert(len(unreal_pyr) == 3)
         euler_rpy = self._get_euler_rpy_from_unreal_pyr(unreal_pyr)
         return euler_rpy
@@ -389,8 +409,8 @@ class UnrealCVWrapper(BaseEngine):
     def get_pose_rpy(self):
         """Return the current pose as a tuple of location and orientation rpy"""
         # return self.get_location(), self.get_orientation_quat()
-        pose_str = self._unrealcv_request('vget /camera/0/pose')
-        pose_unreal = np.array([float(v) for v in pose_str.split()])
+        pose_bytes = self._unrealcv_request(b'vget /camera/0/pose')
+        pose_unreal = np.array([float(v) for v in pose_bytes.split()])
         assert(len(pose_unreal) == 6)
 
         unreal_location = pose_unreal[:3]
@@ -411,16 +431,17 @@ class UnrealCVWrapper(BaseEngine):
         """Set new location in meters as [x, y, z]"""
         unreal_location = self._get_unreal_location_from_location(location)
         # UnrealCV cannot handle scientific notation so we use :f format specifier
-        request_str = 'vset /camera/0/location {:f} {:f} {:f}'.format(
+        request_bytes = 'vset /camera/0/location {:f} {:f} {:f}'.format(
             unreal_location[0], unreal_location[1], unreal_location[2])
-        # print("Sending location request: {}".format(request_str))
-        response = self._unrealcv_request(request_str)
-        if response != "ok":
+        # print("Sending location request: {}".format(request_bytes))
+        response = self._unrealcv_request(request_bytes)
+        if response != b"ok":
             raise self.Exception("UnrealCV request failed: {}".format(response))
         if wait_until_set:
             start_time = time.time()
             while time.time() - start_time < self._request_timeout:
                 if self._is_location_set(location):
+                    time.sleep(0.1)
                     return
             raise self.Exception("UnrealCV: New orientation was not set within time limit")
 
@@ -428,16 +449,17 @@ class UnrealCVWrapper(BaseEngine):
         """Set new orientation in radians"""
         unreal_pitch, unreal_yaw, unreal_roll = self._get_unreal_pyr_from_euler_rpy([roll, pitch, yaw])
         # UnrealCV cannot handle scientific notation so we use :f format specifier
-        request_str = 'vset /camera/0/rotation {:f} {:f} {:f}'.format(
+        request_bytes = 'vset /camera/0/rotation {:f} {:f} {:f}'.format(
             unreal_pitch, unreal_yaw, unreal_roll)
-        # print("Sending orientation request: {}".format(request_str))
-        response = self._unrealcv_request(request_str)
-        if response != "ok":
+        # print("Sending orientation request: {}".format(request_bytes))
+        response = self._unrealcv_request(request_bytes)
+        if response != b"ok":
             raise self.Exception("UnrealCV request failed: {}".format(response))
         if wait_until_set:
             start_time = time.time()
             while time.time() - start_time < self._request_timeout:
                 if self._is_orientation_rpy_set(roll, pitch, yaw):
+                    time.sleep(0.1)
                     return
             raise self.Exception("UnrealCV: New orientation was not set within time limit")
 
@@ -454,16 +476,17 @@ class UnrealCVWrapper(BaseEngine):
         unreal_location = self._get_unreal_location_from_location(location)
         unreal_pyr = self._get_unreal_pyr_from_euler_rpy(euler_rpy)
         # UnrealCV cannot handle scientific notation so we use :f format specifier
-        request_str = 'vset /camera/0/pose {:f} {:f} {:f} {:f} {:f} {:f}'.format(
+        request_bytes = 'vset /camera/0/pose {:f} {:f} {:f} {:f} {:f} {:f}'.format(
             unreal_location[0], unreal_location[1], unreal_location[2],
             unreal_pyr[0], unreal_pyr[1], unreal_pyr[2])
-        response = self._unrealcv_request(request_str)
-        if response != "ok":
+        response = self._unrealcv_request(request_bytes)
+        if response != b"ok":
             raise self.Exception("UnrealCV request failed: {}".format(response))
         if wait_until_set:
             start_time = time.time()
             while time.time() - start_time < self._request_timeout:
                 if self._is_pose_rpy_set((location, euler_rpy)):
+                    time.sleep(0.1)
                     return
             raise self.Exception("UnrealCV: New pose was not set within time limit")
 
@@ -475,28 +498,28 @@ class UnrealCVWrapper(BaseEngine):
 
     def enable_input(self):
         """Enable input in Unreal Engine"""
-        self._unrealcv_request("vset /action/input/enable")
+        self._unrealcv_request(b"vset /action/input/enable")
 
     def disable_input(self):
         """Disable input in Unreal Engine"""
-        self._unrealcv_request("vset /action/input/disable")
+        self._unrealcv_request(b"vset /action/input/disable")
 
     def get_objects(self):
         """List object names in Unreal Engine"""
-        objects = self._unrealcv_request("vget /objects")
+        objects = self._unrealcv_request(b"vget /objects")
         objects = [object_name.strip() for object_name in objects.split()]
         return objects
 
     def show_object(self, object_name):
         """Show object in Unreal Engine"""
         response = self._unrealcv_request("vset /object/{}/show".format(object_name))
-        if response != "ok":
+        if response != b"ok":
             raise self.Exception("UnrealCV request failed: {}".format(response))
 
     def hide_object(self, object_name):
         """Hide object in Unreal Engine"""
         response = self._unrealcv_request("vset /object/{}/hide".format(object_name))
-        if response != "ok":
+        if response != b"ok":
             raise self.Exception("UnrealCV request failed: {}".format(response))
 
     def test(self):
@@ -507,7 +530,7 @@ class UnrealCVWrapper(BaseEngine):
         location1 = self.get_location()
         location2 = location1 + [2, 2, 0]
         self.set_location(location1, wait_until_set=True)
-        for i in xrange(100):
+        for i in range(100):
             self.set_location(location2, wait_until_set=True)
             _ = self.get_depth_image()
             self.set_location(location1, wait_until_set=True)
