@@ -885,18 +885,22 @@ def maxpool3d(x, num_filters, filter_size=(3, 3, 3), stride=(1, 1, 1),
         return pool_out
 
 
-def loss_l2_norm(x, y, reduce_sum_axis=False):
+def loss_l2_norm(x, y=None, reduce_sum_axis=False):
     with tf.name_scope('loss_l2_norm'):
-        loss = tf.square(x - y)
+        if y is not None:
+            x = x - y
+        loss = tf.square(x)
 
         if reduce_sum_axis is not False:
             loss = tf.reduce_sum(loss, reduce_sum_axis)
         return loss
 
 
-def loss_l1_norm(x, y, reduce_sum_axis=False):
+def loss_l1_norm(x, y=None, reduce_sum_axis=False):
     with tf.name_scope('loss_l2_norm'):
-        loss = tf.square(x - y)
+        if y is not None:
+            x = x - y
+        loss = tf.square(x)
 
         if reduce_sum_axis is not False:
             loss = tf.reduce_sum(loss, reduce_sum_axis)
