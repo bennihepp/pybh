@@ -1,4 +1,6 @@
 import numpy as np
+import functools
+import operator
 from .contrib import transformations
 
 
@@ -13,6 +15,12 @@ def radians_to_degrees(radians):
 
 
 class BoundingBox(object):
+
+    @staticmethod
+    def from_points(points):
+        bbox_min = np.min(points, axis=0)
+        bbox_max = np.max(points, axis=0)
+        return BoundingBox(bbox_min, bbox_max)
 
     def __init__(self, min, max):
         self._min = np.array(min)
@@ -43,6 +51,16 @@ class BoundingBox(object):
     def from_center_and_extent(center, extent):
         half_extent = 0.5 * extent
         return BoundingBox(center - half_extent, center + half_extent)
+
+    def is_empty(self):
+        return np.any(self.extent() <= 0)
+
+    def volume(self):
+        if self.is_empty():
+            return 0.0
+        else:
+            extent = self.extent()
+            return functools.reduce(operator.mul, extent, 1.0)
 
     def minimum(self):
         return self._min
@@ -133,20 +151,37 @@ def convert_quat_to_rpy(quat):
     return roll, pitch, yaw
 
 
+def invert_matrix(mat):
+    """Invert matrix"""
+    return np.linalg.inv(mat)
+
+
+def normalize_vector(vec):
+    """Return L2 normalized vector"""
+    # vec_norm = np.sqrt(np.sum(vec ** 2))
+    vec_norm = np.linalg.norm(vec)
+    return vec / vec_norm
+
+
 def normalize_quaternion(quat):
-  """Return normalized quaternion (qx, qy, qz, qw)"""
-  quat_norm = np.sqrt(np.sum(quat ** 2))
-  return quat / quat_norm
+    """Return normalized quaternion (qx, qy, qz, qw)"""
+    return normalize_vector(quat)
 
 
 def invert_quaternion(quat):
-  """Rotate a given quaternion (qx, qy, qz, qw)"""
-  return transformations.quaternion_inverse(quat)
+    """Rotate a given quaternion (qx, qy, qz, qw)"""
+    return transformations.quaternion_inverse(quat)
 
 
 def multiply_quaternion(quat1, quat2):
     """Multiply two quaterions (qx, qy, qz, qw)"""
     return transformations.quaternion_multiply(quat1, quat2)
+
+
+def interpolate_quaternion_slerp(quat1, quat2, fraction):
+    """Slerp interpolation between two quaternions"""
+    inter_quat = transformations.quaternion_slerp(quat1, quat2, fraction)
+    return inter_quat
 
 
 def rotate_vector_with_quaternion(quat, vec):
