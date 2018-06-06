@@ -679,8 +679,7 @@ class TextureTriangles3D(Object3D):
         self._set_uniform('u_render_normal', self._render_normal)
         self._set_uniform('u_raw_normal', self._raw_normal)
         self._set_uniform('u_camera_space_normal', self._camera_space_normal)
-        if 'u_color' in self._prog._members:
-            self._set_uniform('u_color', tuple(self._color))
+        self._set_uniform('u_color', tuple(self._color))
         if self._texture is None:
             self._set_uniform('u_render_texture', False)
         else:
