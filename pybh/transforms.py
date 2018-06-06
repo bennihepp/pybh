@@ -318,7 +318,7 @@ class TransformMatrix(object):
         return TransformMatrix.axis_rotation(angle, axis=[0, 0, 1])
 
     @staticmethod
-    def identity(dtyp=np.float):
+    def identity(dtype=np.float):
         return TransformMatrix(np.eye(4), dtype=dtype)
 
     def __init__(self, transformation_mat, copy=False):
