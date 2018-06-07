@@ -238,8 +238,8 @@ class TextureTriangles3DNode(GeometryNode):
 
 class TextureMeshNode(GeometryNode):
 
-    def __init__(self, mesh_data, color=None, visible=True):
-        geom = geometry.TextureMesh(mesh_data, color)
+    def __init__(self, mesh_data, uniform_color=None, light=None, visible=True):
+        geom = geometry.TextureMesh(mesh_data, uniform_color, light)
         super().__init__(geom, visible)
 
 

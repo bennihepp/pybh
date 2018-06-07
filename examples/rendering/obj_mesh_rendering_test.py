@@ -23,25 +23,24 @@ ctx = moderngl.create_context(330)
 
 axis = geometry.Axis3D(scale=8.0, line_width=5.0)
 
+# obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/Rabbit.obj")
 obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/earth.obj")
-obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/uv_sphere.obj")
+# obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/uv_sphere.obj")
 # obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/capsule.obj")
-# obj_mesh = pyassimp_mesh.PyassimpMesh("/home/bhepp/rl_reconstruct_scenes/scene_kircheenge/meshed_depth_12_trim_5.ply")
-# obj_mesh = pyassimp_mesh.PyassimpMesh("/home/bhepp/rl_reconstruct_scenes/scene_kircheenge/meshed_depth_12_trim_5.obj")
-# obj_mesh = pyassimp_mesh.PyassimpMesh("/home/bhepp/rl_reconstruct_scenes/scene_kircheenge/meshed_small.ply")
-# obj_mesh = pyassimp_mesh.PyassimpMesh("/home/bhepp/rl_reconstruct_scenes/scene_s3dis_area1/mesh.ply")
-# obj_mesh = pyassimp_mesh.PyassimpMesh("/media/bhepp/SeaRed1/datasets/2D-3D-Semantics/area_1/3d/rgb.obj")
-mesh_node = scene.TextureMeshNode(obj_mesh.mesh_data)
+light = geometry.PhongLight(position=[0, 10, 10], Ka=0.5, Kd=0.5, Ks=0.3, attenuate=False, falloff_factor=0.02)
+mesh_node = scene.TextureMeshNode(obj_mesh.mesh_data, light=light)
+# mesh_node.geometry.set_shader_mode(geometry.TextureTriangles3D.SHADER_MODE_NORMAL)
+# mesh_node.geometry.set_render_phong_shading(False)
 for td in obj_mesh.mesh_data:
     bbox = math_utils.BoundingBox.from_points(td.vertices)
     print("Bbox:", bbox, " volume:", bbox.volume())
 
 graph = scene.SceneGraph()
 
-rotation_node_x = scene.RotationXNode(1. * np.pi / 2)
+rotation_node_x = scene.RotationXNode(0*1. * np.pi / 2)
 rotation_node_y = scene.RotationYNode(-0 * 0.5 * np.pi / 4)
-# scale_node = scene.ScaleNode(5.0)
 scale_node = scene.ScaleNode(1.0)
+# scale_node = scene.ScaleNode(5.0)
 scale_node.add_child(mesh_node)
 scale_node.add_child(axis)
 rotation_node_x.add_child(scale_node)
@@ -89,5 +88,3 @@ while not window.has_exit:
     # rotation_node_x.transformation = np.dot(mat, rotation_node_x.transformation)
 
     rate.update_and_print_rate("FPS", print_interval=50)
-
-# Image.frombytes('RGB', fbo.size, fbo.read(), 'raw', 'RGB', 0, -1).show()

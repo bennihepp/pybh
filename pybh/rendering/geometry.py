@@ -25,9 +25,13 @@ class Object3D(object):
             self._initialize(ctx)
             self._initialized = True
 
-    def _set_uniform(self, name, value):
+    def _set_uniform(self, name, value, required=False):
         if name in self._prog._members:
+            if isinstance(value, list) or isinstance(value, np.ndarray):
+                value = tuple(value)
             self._prog[name].value = value
+        elif required:
+            raise RuntimeError("Could not find required uniform: {:s}".format(name))
 
     def _prepare_render(self, ctx, projection_mat, view_mat, model_mat):
         vm_mat = np.dot(view_mat, model_mat)
@@ -37,7 +41,7 @@ class Object3D(object):
         self._set_uniform('u_model_mat', tuple(model_mat.T.ravel()))
         if 'u_normal_mat' in self._prog._members:
             normal_mat = np.linalg.inv(vm_mat[:3, :3]).T
-            self._set_uniform('u_normal_mat', tuple(normal_mat.T.ravel()))
+            self._set_uniform('u_normal_mat', tuple(normal_mat.T.ravel()), required=True)
         self._set_uniform('u_vm_mat', tuple(vm_mat.T.ravel()))
         self._set_uniform('u_pvm_mat', tuple(pvm_mat.T.ravel()))
 
@@ -498,10 +502,60 @@ class TextureTrianglesData(object):
         return self._indices
 
 
+class PhongLight(object):
+
+    def __init__(self, position=None, ambient=None, diffuse=None, specular=None,
+                 Ka=0.5, Kd=0.5, Ks=0.1, shininess=5.0,
+                 attenuate=False, falloff_factor=0.02):
+        if position is None:
+            position = np.array([0, 0, 50], dtype=np.float32)
+        if ambient is None:
+            ambient = np.array([1, 1, 1], dtype=np.float32)
+        if diffuse is None:
+            diffuse = np.array([1, 1, 1], dtype=np.float32)
+        if specular is None:
+            specular = np.array([1, 1, 1], dtype=np.float32)
+        self.position = position
+        self.ambient = ambient
+        self.diffuse = diffuse
+        self.specular = specular
+        self.Ka = Ka
+        self.Kd = Kd
+        self.Ks = Ks
+        self.shininess =shininess
+        self.attenuate = attenuate
+        self.falloff_factor = falloff_factor
+
+
 class TextureTriangles3D(Object3D):
+
+    SHADER_MODE_UNIFORM = 0
+    SHADER_MODE_COLOR = 1
+    SHADER_MODE_TEXTURE = 2
+    SHADER_MODE_NORMAL = 3
+    SHADER_MODE_NORMAL_RAW = 4
 
     VERTEX_SHADER_SRC = """
         #version 330
+
+        const int SHADER_UNIFORM = 0;
+        const int SHADER_COLOR = 1;
+        const int SHADER_TEXTURE = 2;
+        const int SHADER_NORMAL = 3;
+        const int SHADER_NORMAL_RAW = 4;
+
+        struct Light {
+            vec3 position;
+            vec3 ambient;
+            vec3 diffuse;
+            vec3 specular;
+            float Ka;
+            float Kd;
+            float Ks;
+            float shininess;
+            bool attenuate;
+            float falloff_factor;
+        };
 
         in vec3 in_vert;
         in vec3 in_norm;
@@ -512,26 +566,48 @@ class TextureTriangles3D(Object3D):
         out vec3 v_norm;
         out vec4 v_color;
         out vec2 v_texcoord;
+        out vec3 v_cs_vert;
+        out vec3 v_cs_light_position;
+        out vec3 v_cs_norm;
 
-        uniform bool u_render_normal;
-        uniform bool u_render_texture;
+        uniform int u_shader_mode;
+        uniform bool u_phong_shading;
         uniform bool u_camera_space_normal;
         uniform mat4 u_pvm_mat;
+        uniform mat4 u_vm_mat;
         uniform mat3 u_normal_mat;
+        uniform mat4 u_view_mat;
+        uniform vec4 u_color;
+        uniform Light u_light;
 
         void main() {
+            v_vert = in_vert;
             gl_Position = u_pvm_mat * vec4(in_vert, 1.0);
-            if (u_render_normal && u_camera_space_normal) {
+
+            if (u_shader_mode == SHADER_NORMAL && u_camera_space_normal) {
                 v_norm = u_normal_mat * in_norm;
             }
             else {
-                v_norm = in_norm;
-                if (u_render_texture) {
-                    v_texcoord = in_texcoord;
-                }
-                else {
-                    v_color = in_color;
-                }
+                v_norm = normalize(in_norm);
+            }
+
+            switch (u_shader_mode) {
+            case SHADER_UNIFORM:
+                v_color = u_color;
+                break;
+            case SHADER_COLOR:
+                v_color = in_color;
+                break;
+            case SHADER_TEXTURE:
+                v_texcoord = in_texcoord;
+                break;
+            }
+
+            if (u_phong_shading) {
+                v_cs_vert = (u_vm_mat * vec4(v_vert, 1.0)).xyz;
+                v_cs_light_position = (u_view_mat * vec4(u_light.position, 1.0)).xyz;
+                v_cs_norm = u_normal_mat * v_norm;
+                v_cs_norm = normalize(v_cs_norm);
             }
         }
     """
@@ -539,43 +615,120 @@ class TextureTriangles3D(Object3D):
     FRAGMENT_SHADER_SRC = """
         #version 330
 
+        const bool USE_DERIVATIVE_FOR_NORMAL = false;
+
+        const int SHADER_UNIFORM = 0;
+        const int SHADER_COLOR = 1;
+        const int SHADER_TEXTURE = 2;
+        const int SHADER_NORMAL = 3;
+        const int SHADER_NORMAL_RAW = 4;
+
+        struct Light {
+            vec3 position;
+            vec3 ambient;
+            vec3 diffuse;
+            vec3 specular;
+            float Ka;
+            float Kd;
+            float Ks;
+            float shininess;
+            bool attenuate;
+            float falloff_factor;
+        };
+
         in vec3 v_vert;
         in vec3 v_norm;
         in vec4 v_color;
         in vec2 v_texcoord;
+        in vec3 v_cs_vert;
+        in vec3 v_cs_light_position;
+        in vec3 v_cs_norm;
 
         out vec4 f_color;
 
-        uniform bool u_render_normal;
-        uniform bool u_raw_normal;
-        uniform bool u_render_texture;
+        uniform int u_shader_mode;
+        uniform bool u_phong_shading;
         uniform sampler2D u_texture;
-        uniform vec4 u_color;
+        uniform Light u_light;
 
-        void main() {
-            float lum = 1;
-            if (u_render_normal) {
-                vec3 color;
-                if (u_raw_normal) {
-                    color = v_norm;
-                }
-                else {
-                    color = 0.5 * v_norm + 0.5;
-                }
-                f_color = vec4(color * lum, 1.0);
-            }
-            else if (u_render_texture) {
-                f_color = vec4(texture(u_texture, v_texcoord).rgb * lum, 1.0);
+        float compute_diffuse_lambert(vec3 cs_light_direction, vec3 cs_normal, float Kd) {
+            return Kd * max(dot(cs_light_direction, cs_normal), 0.0);
+        }
+
+        float compute_specular_phong(vec3 cs_light_direction, vec3 cs_viewer_direction, vec3 cs_normal,
+            float Ks, float shininess) {
+            vec3 cs_reflection = 2 * dot(cs_light_direction, cs_normal) * cs_normal - cs_light_direction;
+            return Ks * pow(max(dot(cs_reflection.xyz, cs_viewer_direction.xyz), 0), shininess);
+        }
+
+        float compute_attenuation(vec3 cs_light_position, vec3 cs_vert, bool attenuate, float falloff_factor) {
+            if (attenuate) {
+                float distance = length(cs_light_position - cs_vert);
+                return 1 / (falloff_factor * distance * distance);
             }
             else {
-                f_color = v_color * lum;
+                return 1.0;
+            }
+        }
+
+        vec3 get_normal(vec3 vert, vec3 norm) {
+            if (USE_DERIVATIVE_FOR_NORMAL) {
+                vec3 dFdxPos = dFdx(vert.xyz);
+                vec3 dFdyPos = dFdy(vert.xyz);
+                return normalize(cross(dFdxPos, dFdyPos));
+            }
+            else {
+                return norm;
+            }
+        }
+
+        void main() {
+            switch (u_shader_mode) {
+            case SHADER_UNIFORM:
+            case SHADER_COLOR:
+                f_color = v_color;
+                break;
+            case SHADER_TEXTURE:
+                f_color = vec4(texture(u_texture, v_texcoord).rgb, 1.0);
+                break;
+            case SHADER_NORMAL:
+                f_color = vec4(0.5 * get_normal(v_vert, v_norm) + 0.5, 1.0);
+                break;
+            case SHADER_NORMAL_RAW:
+                f_color = vec4(get_normal(v_vert, v_norm), 1.0);
+                break;
+            }
+
+            if (u_phong_shading) {
+                vec3 cs_normal = get_normal(v_cs_vert, v_cs_norm);
+                vec3 cs_light_direction = normalize(v_cs_light_position - v_cs_vert);
+                //cs_light_direction = vec3(1, 0, 0);
+                vec3 cs_viewer_direction = -normalize(v_cs_vert);
+                vec3 ambient = u_light.ambient * u_light.Ka;
+                vec3 diffuse = u_light.diffuse * compute_diffuse_lambert(
+                    cs_light_direction, cs_normal, u_light.Kd);
+                vec3 specular;
+                if (dot(cs_light_direction, cs_normal) > 0) {
+                    specular = u_light.specular * compute_specular_phong(
+                        cs_light_direction, cs_viewer_direction, cs_normal, u_light.Ks, u_light.shininess);
+                }
+                else {
+                    specular = vec3(0, 0, 0);
+                }
+                float attenuation = compute_attenuation(v_cs_light_position, v_cs_vert,
+                    u_light.attenuate, u_light.falloff_factor);
+                vec3 color = f_color.xyz * (ambient + attenuation * diffuse + attenuation * specular);
+                f_color.xyz = color;
             }
         }
     """
 
-    def __init__(self, triangles_data, color=None):
+    def __init__(self, triangles_data, uniform_color=None, light=None):
         super().__init__(self.VERTEX_SHADER_SRC, self.FRAGMENT_SHADER_SRC, triangles_data.vertices.dtype)
         assert triangles_data.has_normals()
+        if light is None:
+            light = PhongLight()
+        self._light = light
         self._triangles_data = triangles_data
         self._texture = triangles_data.texture
         if triangles_data.indices is None:
@@ -588,56 +741,46 @@ class TextureTriangles3D(Object3D):
         self._normal_vbo = None
         self._vao = None
         self._ibo = None
-        if color is None:
-            color = np.array([0.5, 0.5, 0.5, 1], dtype=triangles_data.vertices.dtype)
-        self._color = color
-        self._render_normal = False
-        self._raw_normal = False
-        self._camera_space_normal = False
+        if uniform_color is None:
+            uniform_color = np.array([0.5, 0.5, 0.5, 1], dtype=triangles_data.vertices.dtype)
+        self._uniform_color = uniform_color
         if self._triangles_data.texcoords is not None and self._triangles_data.texture is not None:
-            self._render_texture = True
+            self._shader_mode = self.SHADER_MODE_TEXTURE
+        elif self._triangles_data.colors is not None:
+            self._shader_mode = self.SHADER_MODE_COLORS
         else:
-            self._render_texture = False
+            self._shader_mode = self.SHADER_MODE_UNIFORM
+        self._render_phong_shading = True
+        self._render_camera_space_normal = False
 
-    @property
-    def render_normal(self):
-        return self._render_normal
+    def get_render_phong_shading(self):
+        return self._render_phong_shading
 
-    @render_normal.setter
-    def render_normal(self, render_normal):
-        self._render_normal = render_normal
+    def set_render_phong_shading(self, render_phong_shading):
+        self._render_phong_shading = render_phong_shading
 
-    @property
-    def raw_normal(self):
-        return self._raw_normal
+    def get_shader_mode(self):
+        return self._shader_mode
 
-    @raw_normal.setter
-    def raw_normal(self, raw_normal):
-        self._raw_normal = raw_normal
+    def set_shader_mode(self, shader_mode):
+        assert shader_mode == self.SHADER_MODE_UNIFORM \
+               or shader_mode == self.SHADER_MODE_COLOR \
+               or shader_mode == self.SHADER_MODE_TEXTURE \
+               or shader_mode == self.SHADER_MODE_NORMAL \
+               or shader_mode == self.SHADER_MODE_NORMAL_RAW
+        self._shader_mode = shader_mode
 
-    @property
-    def camera_space_normal(self):
-        return self._camera_space_normal
+    def get_render_camera_space_normal(self):
+        return self._render_camera_space_normal
 
-    @camera_space_normal.setter
-    def camera_space_normal(self, camera_space_normal):
-        self._camera_space_normal = camera_space_normal
+    def set_render_camera_space_normal(self, render_camera_space_normal):
+        self._render_camera_space_normal = render_camera_space_normal
 
-    @property
-    def render_texture(self):
-        return self._render_texture
+    def get_uniform_color(self):
+        return self._uniform_color
 
-    @render_texture.setter
-    def render_texture(self, render_texture):
-        self._render_texture = render_texture
-
-    @property
-    def color(self):
-        return self._color
-
-    @color.setter
-    def color(self, color):
-        self._color = color
+    def set_uniform_color(self, uniform_color):
+        self._uniform_color = uniform_color
 
     def override_vertex_shader(self, vertex_shader_src):
         assert not self._initialized
@@ -651,13 +794,13 @@ class TextureTriangles3D(Object3D):
         vao_content = []
         self._vertex_vbo = ctx.buffer(self._triangles_data.vertices)
         vao_content.append((self._vertex_vbo, '3f', 'in_vert'))
-        if self._triangles_data.colors is not None and 'in_color' in self._prog._members:
+        if self._triangles_data.colors is not None and 'in_color' in self._prog:
             self._color_vbo = ctx.buffer(self._triangles_data.colors)
             vao_content.append((self._color_vbo, '4f', 'in_color'))
-        if self._triangles_data.texcoords is not None and 'in_texcoord' in self._prog._members:
+        if self._triangles_data.texcoords is not None and 'in_texcoord' in self._prog:
             self._texcoord_vbo = ctx.buffer(self._triangles_data.texcoords)
             vao_content.append((self._texcoord_vbo, '2f', 'in_texcoord'))
-        if self._triangles_data.normals is not None and 'in_norm' in self._prog._members:
+        if self._triangles_data.normals is not None and 'in_norm' in self._prog:
             self._normal_vbo = ctx.buffer(self._triangles_data.normals)
             vao_content.append((self._normal_vbo, '3f', 'in_norm'))
         if self._triangles_data.indices is not None:
@@ -676,28 +819,50 @@ class TextureTriangles3D(Object3D):
                 self._texture.build_mipmaps()
 
     def _render(self, ctx, projection_mat, view_mat, model_mat):
-        self._set_uniform('u_render_normal', self._render_normal)
-        self._set_uniform('u_raw_normal', self._raw_normal)
-        self._set_uniform('u_camera_space_normal', self._camera_space_normal)
-        self._set_uniform('u_color', tuple(self._color))
-        if self._texture is None:
-            self._set_uniform('u_render_texture', False)
-        else:
-            self._set_uniform('u_render_texture', self._render_texture)
+        # Setup light
+        if self._render_phong_shading:
+            self._set_uniform('u_light.position', self._light.position)
+            self._set_uniform('u_light.ambient', self._light.ambient)
+            self._set_uniform('u_light.diffuse', self._light.diffuse)
+            self._set_uniform('u_light.specular', self._light.specular)
+            self._set_uniform('u_light.Ka', self._light.Ka)
+            self._set_uniform('u_light.Kd', self._light.Kd)
+            self._set_uniform('u_light.Ks', self._light.Ks)
+            self._set_uniform('u_light.shininess', self._light.shininess)
+            self._set_uniform('u_light.attenuate', self._light.attenuate)
+            self._set_uniform('u_light.falloff_factor', self._light.falloff_factor)
+
+        # Setup render options
+        self._set_uniform('u_shader_mode', self._shader_mode)
+        self._set_uniform('u_phong_shading', self._render_phong_shading)
+        self._set_uniform('u_camera_space_normal', self._render_camera_space_normal)
+        self._set_uniform('u_color', tuple(self._uniform_color))
+
+        # Setup texture
+        if self._shader_mode == self.SHADER_MODE_TEXTURE:
+            assert self._triangles_data.texcoords is not None and self._triangles_data.texture is not None
             self._texture.use()
+
+        # Issue render command
         self._vao.render(self._render_mode, self._num_primitives)
 
 
 class TextureMesh(object):
 
-    def __init__(self, mesh_data, color=None):
+    SHADER_MODE_UNIFORM = TextureTriangles3D.SHADER_MODE_UNIFORM
+    SHADER_MODE_COLOR = TextureTriangles3D.SHADER_MODE_COLOR
+    SHADER_MODE_TEXTURE = TextureTriangles3D.SHADER_MODE_TEXTURE
+    SHADER_MODE_NORMAL = TextureTriangles3D.SHADER_MODE_NORMAL
+    SHADER_MODE_NORMAL_RAW = TextureTriangles3D.SHADER_MODE_NORMAL_RAW
+
+    def __init__(self, mesh_data, uniform_color=None, light=None):
         if isinstance(mesh_data, TextureTrianglesData):
             mesh_data = [mesh_data]
         assert len(mesh_data) > 0
         self._triangles_list = []
         for triangles_data in mesh_data:
             if isinstance(triangles_data, TextureTrianglesData):
-                triangles = TextureTriangles3D(triangles_data, color)
+                triangles = TextureTriangles3D(triangles_data, uniform_color, light)
             else:
                 raise ValueError("Unsupported triangle data object")
             self._triangles_list.append(triangles)
@@ -706,47 +871,38 @@ class TextureMesh(object):
         for triangles in self._triangles_list:
             triangles.render(ctx, projection_mat, view_mat, model_mat)
 
-    @property
-    def render_normal(self):
-        return self._triangles_list[0].render_normal
+    def get_render_phong_shading(self):
+        return self._triangles_list[0].get_phong_shading()
 
-    @render_normal.setter
-    def render_normal(self, render_normal):
+    def set_render_phong_shading(self, render_phong_shading):
         for triangles in self._triangles_list:
-            triangles.render_normal = render_normal
+            triangles.set_render_phong_shading(render_phong_shading)
 
-    @property
-    def raw_normal(self):
-        return self._triangles_list[0].raw_normal
+    def get_shader_mode(self):
+        return self._triangles_list[0].get_shader_mode()
 
-    @raw_normal.setter
-    def raw_normal(self, raw_normal):
+    def set_shader_mode(self, shader_mode):
         for triangles in self._triangles_list:
-            triangles.raw_normal = raw_normal
+            triangles.set_shader_mode(shader_mode)
 
-    @property
-    def camera_space_normal(self):
-        return self._triangles_list[0].camera_space_normal
+    def get_render_camera_space_normal(self):
+        return self._triangles_list[0].get_render_camera_space_normal()
 
-    @camera_space_normal.setter
-    def camera_space_normal(self, camera_space_normal):
+    def set_render_camera_space_normal(self, render_camera_space_normal):
         for triangles in self._triangles_list:
-            triangles.camera_space_normal = camera_space_normal
+            triangles.set_render_camera_space_normal(render_camera_space_normal)
 
-    @property
-    def render_texture(self):
-        return self._triangles_list[0].render_texture
+    def get_uniform_color(self):
+        return self._triangles_list[0].get_uniform_color()
 
-    @render_texture.setter
-    def render_texture(self, render_texture):
+    def set_uniform_color(self, uniform_color):
         for triangles in self._triangles_list:
-            triangles.render_texture = render_texture
+            triangles.set_uniform_color(uniform_color)
 
-    @property
-    def color(self):
-        return self._triangles_list[0].color
-
-    @color.setter
-    def color(self, color):
+    def override_vertex_shader(self, vertex_shader_src):
         for triangles in self._triangles_list:
-            triangles.color = color
+            triangles.override_vertex_shader(vertex_shader_src)
+
+    def override_fragment_shader(self, fragment_shader_src):
+        for triangles in self._triangles_list:
+            triangles.override_fragment_shader(fragment_shader_src)
