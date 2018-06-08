@@ -24,8 +24,8 @@ ctx = viewer.ctx
 
 axis = geometry.Axis3D(scale=8.0, line_width=5.0)
 
-# obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/Rabbit.obj")
-obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/earth.obj")
+obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/Rabbit.obj")
+# obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/earth.obj")
 # obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/uv_sphere.obj")
 # obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/capsule.obj")
 light = geometry.PhongLight(position=[0, 10, 10], Ka=0.5, Kd=0.5, Ks=0.3, attenuate=False, falloff_factor=0.02)
@@ -60,7 +60,7 @@ ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
 
 viewer.add_scene(graph)
 
-viewer.camera.look_at([0, 0, 15], [0, 0, 0], [0, 1, 0])
+viewer.trackball.look_at([0, 0, 15], [0, 0, 0], [0, 1, 0])
 
 #ctx.wireframe = True
 # mesh_node.geometry.render_normal = True

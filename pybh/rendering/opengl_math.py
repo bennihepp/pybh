@@ -59,3 +59,8 @@ def perspective_matrix_focal_length(f, aspect, near, far, dtype=np.float32):
 def perspective_matrix(fov, aspect, near, far, dtype=np.float32):
     f = focal_length_from_fov(fov)
     return perspective_matrix_focal_length(f, aspect, near, far, dtype=dtype)
+
+
+def perspective_matrix_degrees(fov, aspect, near, far, dtype=np.float32):
+    fov = fov * np.pi / 180.
+    return perspective_matrix_focal_length(fov, aspect, near, far, dtype)

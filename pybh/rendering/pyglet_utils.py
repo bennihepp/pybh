@@ -30,7 +30,6 @@ class PygletViewer(object):
         self._window.on_mouse_drag = self._on_mouse_drag
         self._window.on_mouse_scroll = self._on_mouse_scroll
         self._cameras = []
-        self._trackball = None
         fov = fov_degrees * np.pi / 180.0
         self._fov = fov
         self._znear = znear
@@ -38,6 +37,8 @@ class PygletViewer(object):
         self._update_projection_matrix()
         version_code = int("{:d}{:d}0".format(config.major_version, config.minor_version))
         self._ctx = moderngl.create_context(version_code)
+        self._trackball = opengl_camera.TrackballCamera(self.width, self.height)
+        self.set_trackball(self._trackball)
 
     def _update_projection_matrix(self):
         self._projection_matrix = opengl_math.perspective_matrix(
@@ -70,6 +71,10 @@ class PygletViewer(object):
                     self._trackball.rotate(x, y, dx / 100., dy / 100.)
                 elif modifiers == 1:
                     self._trackball.move(dx / 10., dy / 10.)
+
+    @property
+    def trackball(self):
+        return self._trackball
 
     @property
     def ctx(self):
@@ -150,9 +155,7 @@ class PygletSceneViewer(PygletViewer):
             background_color = [0.3, 0.3, 0.3, 1.0]
         self._background_color = background_color
         self._scenes_graphs = []
-        trackball = opengl_camera.TrackballCamera(self.width, self.height)
-        self.set_trackball(trackball)
-        self._axis_drawer = drawing_helpers.AxisDrawer(trackball)
+        self._axis_drawer = drawing_helpers.AxisDrawer()
         self._rate = utils.RateTimer()
 
     def _on_key_press(self, symbol, modifiers):
@@ -162,10 +165,6 @@ class PygletSceneViewer(PygletViewer):
         elif symbol == key.W:
             self._ctx.wireframe = not self._ctx.wireframe
             return True
-
-    @property
-    def camera(self):
-        return self._trackball
 
     def get_background_color(self):
         return self._background_color
@@ -187,7 +186,9 @@ class PygletSceneViewer(PygletViewer):
         assert i < len(self._scenes_graphs)
         del self._scenes_graphs[i]
 
-    def render(self, show_fps=True, draw_axis=True, process_events=True, flip=True):
+    def render(self, camera=None, show_fps=True, draw_axis=True, process_events=True, flip=True):
+        if camera is None:
+            camera = self._trackball
         self._ctx.viewport = (0, 0, self._window.width, self._window.height)
         self._ctx.clear(*self._background_color)
         for graph in self._scenes_graphs:
@@ -196,7 +197,7 @@ class PygletSceneViewer(PygletViewer):
         if show_fps:
             self._rate.update_and_print_rate("FPS", print_interval=50)
         if draw_axis:
-            self._axis_drawer.render(self._ctx)
+            self._axis_drawer.render(self._ctx, camera.projection_matrix, camera.view_matrix)
         if process_events:
             self.process_events()
         if flip:

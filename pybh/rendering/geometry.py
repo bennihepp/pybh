@@ -475,6 +475,22 @@ class TextureTrianglesData(object):
             self._indices = None
 
     @property
+    def has_texture(self):
+        return self._texture is not None
+
+    @property
+    def has_texcoords(self):
+        return self._texcoords is not None
+
+    @property
+    def has_colors(self):
+        return self._colors is not None
+
+    @property
+    def has_normals(self):
+        return self._normals is not None
+
+    @property
     def vertices(self):
         return self._vertices
 

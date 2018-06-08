@@ -3,6 +3,79 @@ from .contrib import transformations
 from . import math_utils
 
 
+def translation_matrix(offset):
+    mat = np.eye(4, dtype=offset.dtype)
+    mat[:3, 3] = offset
+    return mat
+
+
+def apply_translation(mat, offset):
+    offset_mat = translation_matrix(offset)
+    print(offset, offset_mat)
+    mat[...] = np.dot(mat, offset_mat)
+    return mat
+
+
+def scale_matrix(scale):
+    scale = np.asarray(scale)
+    if len(scale) <= 1:
+        scale = np.asarray([scale, scale, scale])
+    mat = np.eye(4, dtype=scale.dtype)
+    print(scale, mat)
+    mat[:3, :3] = np.diag(scale)
+    return mat
+
+
+def apply_scale(mat, scale):
+    scale_mat = scale_matrix(scale)
+    mat[...] = np.dot(mat, scale_mat)
+    return mat
+
+
+def x_rotation_matrix(angle, point=None):
+    rot_mat = transformations.rotation_matrix(angle, [1, 0, 0], point)
+    return rot_mat
+
+
+def apply_x_rotation(mat, angle, point=None):
+    rot_mat = x_rotation_matrix(angle, point)
+    mat[...] = np.dot(mat, rot_mat)
+    return mat
+
+
+def y_rotation_matrix(angle, point=None):
+    rot_mat = transformations.rotation_matrix(angle, [0, 1, 0], point)
+    return rot_mat
+
+
+def apply_y_rotation(mat, angle, point=None):
+    rot_mat = y_rotation_matrix(angle, point)
+    mat[...] = np.dot(mat, rot_mat)
+    return mat
+
+
+def z_rotation_matrix(angle, point=None):
+    rot_mat = transformations.rotation_matrix(angle, [0, 0, 1], point)
+    return rot_mat
+
+
+def apply_z_rotation(mat, angle, point=None):
+    rot_mat = z_rotation_matrix(angle, point)
+    mat[...] = np.dot(mat, rot_mat)
+    return mat
+
+
+def rotation_matrix(angle, axis, point=None):
+    rot_mat = transformations.rotation_matrix(angle, axis, point)
+    return rot_mat
+
+
+def apply_rotation(mat, angle, axis, point=None):
+    rot_mat = rotation_matrix(angle, axis, point)
+    mat[...] = np.dot(mat, rot_mat)
+    return mat
+
+
 class RotationMatrix(object):
     """A rotation represented by a matrix"""
 
