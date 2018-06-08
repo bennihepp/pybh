@@ -1,6 +1,5 @@
 import numpy as np
 import moderngl
-from pybh import utils
 from pybh import transforms
 from pybh import math_utils
 from pybh.rendering import geometry
@@ -12,14 +11,16 @@ from pybh.rendering import opengl_camera
 # from OpenGL import GL as gl
 
 
-window = pyglet_utils.PygletWindow(vsync=True)
+viewer = pyglet_utils.PygletSceneViewer(vsync=True)
+# viewer = pyglet_utils.PygletViewer(vsync=True)
 # camera = opengl_camera.Camera(window.width, window.height)
 # window.register_camera(camera)
-camera = opengl_camera.TrackballCamera(window.width, window.height)
-window.set_trackball(camera)
-ctx = moderngl.create_context(330)
+# camera = opengl_camera.TrackballCamera(viewer.width, viewer.height)
+# viewer.set_trackball(camera)
+# ctx = moderngl.create_context(330)
 
 # ctx = moderngl.create_standalone_context(330)
+ctx = viewer.ctx
 
 axis = geometry.Axis3D(scale=8.0, line_width=5.0)
 
@@ -47,8 +48,8 @@ rotation_node_x.add_child(scale_node)
 rotation_node_y.add_child(rotation_node_x)
 graph.root.add_child(rotation_node_y)
 
-width = window.width
-height = window.height
+# width = viewer.width
+# height = viewer.height
 # fbo = ctx.simple_framebuffer((width, height))
 # fbo.use()
 
@@ -57,34 +58,20 @@ ctx.enable(moderngl.CULL_FACE)
 ctx.enable(moderngl.BLEND)
 ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
 
-camera.look_at([0, 0, 15], [0, 0, 0], [0, 1, 0])
+viewer.add_scene(graph)
+
+viewer.camera.look_at([0, 0, 15], [0, 0, 0], [0, 1, 0])
 
 #ctx.wireframe = True
 # mesh_node.geometry.render_normal = True
 # mesh_node.geometry.raw_normal = True
 # mesh_node.geometry.render_texture = False
 
-rate = utils.RateTimer()
-while not window.has_exit:
-    ctx.viewport = (0, 0, window.width, window.height)
-    ctx.clear(0.3, 0.3, 0.3, 1.0)
-    camera.render(ctx, graph)
-    # graph.render(ctx, camera.projection_matrix, camera.view_matrix)
 
-    ctx.viewport = (0, 0, width / 4, height / 4)
-    # ctx.clear(0.3, 0.3, 0.3, 1.0, viewport=ctx.viewport)
-    axis_view_matrix = camera.view_matrix_without_translation
-    axis_view_matrix = np.dot(transforms.TransformMatrix.from_translation([0, 0, -10]).matrix, axis_view_matrix)
-    ctx.disable(moderngl.DEPTH_TEST)
-    axis.render(ctx, camera.projection_matrix, axis_view_matrix)
-    ctx.enable(moderngl.DEPTH_TEST)
+while not viewer.should_quit:
+    viewer.render()
 
-    window.dispatch_events()
-    window.flip()
-
-    # mat = transforms.TransformMatrix.from_axis_rotation(0.5 * np.pi / 180, [0, 1, 0]).matrix
-    # rotation_node_x.transformation = np.dot(mat, rotation_node_x.transformation)
-    # mat = transforms.TransformMatrix.from_axis_rotation(0.5 * np.pi / 180, [1, 0, 0]).matrix
-    # rotation_node_x.transformation = np.dot(mat, rotation_node_x.transformation)
-
-    rate.update_and_print_rate("FPS", print_interval=50)
+    mat = transforms.TransformMatrix.from_axis_rotation(0.5 * np.pi / 180, [0, 1, 0]).matrix
+    rotation_node_x.transformation = np.dot(mat, rotation_node_x.transformation)
+    # # mat = transforms.TransformMatrix.from_axis_rotation(0.5 * np.pi / 180, [1, 0, 0]).matrix
+    # # rotation_node_x.transformation = np.dot(mat, rotation_node_x.transformation)
