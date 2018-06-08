@@ -243,6 +243,13 @@ class TextureMeshNode(GeometryNode):
         super().__init__(geom, visible)
 
 
+class Axis3DNode(GeometryNode):
+
+    def __init__(self, scale=1.0, line_width=1.0, dtype=np.float32, visible=True):
+        geom = geometry.Axis3D(scale, line_width, dtype)
+        super().__init__(geom, visible)
+
+
 class SceneGraph(object):
 
     def __init__(self):
@@ -252,6 +259,17 @@ class SceneGraph(object):
         if model_mat is None:
             model_mat = np.eye(4, dtype=view_mat.dtype)
         self._root.render(ctx, projection_mat, view_mat, model_mat)
+
+    def iterate_depth_first(self, node=None):
+        if node is None:
+            print("recursing into", self._root)
+            yield from self.iterate_depth_first(self._root)
+        else:
+            print("yielding node")
+            yield node
+            if node.children is not None:
+                for child_node in node.children:
+                    yield from self.iterate_depth_first(child_node)
 
     @property
     def root(self):

@@ -22,7 +22,7 @@ viewer = pyglet_utils.PygletSceneViewer(vsync=True)
 # ctx = moderngl.create_standalone_context(330)
 ctx = viewer.ctx
 
-axis = geometry.Axis3D(scale=8.0, line_width=5.0)
+axis_node = scene.Axis3DNode(scale=8.0, line_width=5.0)
 
 obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/Rabbit.obj")
 # obj_mesh = pyassimp_mesh.PyassimpMesh("meshes/earth.obj")
@@ -43,7 +43,7 @@ rotation_node_y = scene.RotationYNode(-0 * 0.5 * np.pi / 4)
 scale_node = scene.ScaleNode(1.0)
 # scale_node = scene.ScaleNode(5.0)
 scale_node.add_child(mesh_node)
-scale_node.add_child(axis)
+scale_node.add_child(axis_node)
 rotation_node_x.add_child(scale_node)
 rotation_node_y.add_child(rotation_node_x)
 graph.root.add_child(rotation_node_y)

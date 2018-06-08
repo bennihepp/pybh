@@ -11,6 +11,8 @@ from . import opengl_camera
 from . import opengl_math
 from . import drawing_helpers
 from .. import utils
+from . import scene
+from . import geometry
 
 
 class PygletViewer(object):
@@ -70,7 +72,7 @@ class PygletViewer(object):
                 if modifiers == 0:
                     self._trackball.rotate(x, y, dx / 100., dy / 100.)
                 elif modifiers == 1:
-                    self._trackball.move(dx / 10., dy / 10.)
+                    self._trackball.move(dx / 50., dy / 50.)
 
     @property
     def trackball(self):
@@ -148,7 +150,7 @@ class PygletViewer(object):
 
 class PygletSceneViewer(PygletViewer):
 
-    def __init__(self, background_color=None, *args, **kwargs):
+    def __init__(self, background_color=None, gl_flags=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._window.on_key_press = self._on_key_press
         if background_color is None:
@@ -157,6 +159,41 @@ class PygletSceneViewer(PygletViewer):
         self._scenes_graphs = []
         self._axis_drawer = drawing_helpers.AxisDrawer()
         self._rate = utils.RateTimer()
+        if gl_flags is None:
+            gl_flags = {}
+        self._gl_flags = gl_flags
+        self.set_gl_flag(moderngl.DEPTH_TEST, True)
+        self.set_gl_flag(moderngl.CULL_FACE, True)
+
+    def get_gl_flag(self, flag):
+        return self._gl_flags.get(flag, None)
+
+    def set_gl_flag(self, flag, enabled):
+        self._gl_flags[flag] = enabled
+
+    def clear_gl_flag(self, flag):
+        del self._gl_flags[flag]
+
+    def _iterate_scene_nodes(self):
+        for graph in self._scenes_graphs:
+            for node in graph.iterate_depth_first():
+                yield node
+
+    def _iterate_scene_geometries(self):
+        for node in self._iterate_scene_nodes():
+            if isinstance(node, scene.GeometryNode):
+                yield node.geometry
+
+    def _iterate_scene_texture_geometries(self):
+        for geom in self._iterate_scene_geometries():
+            if isinstance(geom, geometry.TextureTriangles3D):
+                yield geom
+            elif isinstance(geom, geometry.TextureMesh):
+                yield geom
+
+    def _apply_to_texture_geometries(self, func):
+        for geom in self._iterate_scene_texture_geometries():
+            func(geom)
 
     def _on_key_press(self, symbol, modifiers):
         if symbol == key.ESCAPE:
@@ -164,6 +201,41 @@ class PygletSceneViewer(PygletViewer):
             return True
         elif symbol == key.W:
             self._ctx.wireframe = not self._ctx.wireframe
+            return True
+        elif symbol == key.D:
+            if modifiers & key.MOD_SHIFT:
+                self.set_gl_flag(moderngl.DEPTH_TEST, True)
+            elif modifiers & key.MOD_CTRL:
+                self.set_gl_flag(moderngl.DEPTH_TEST, False)
+        elif symbol == key.F:
+            if modifiers & key.MOD_SHIFT:
+                self.set_gl_flag(moderngl.CULL_FACE, True)
+            elif modifiers & key.MOD_CTRL:
+                self.set_gl_flag(moderngl.CULL_FACE, False)
+        elif symbol == key.P:
+            if modifiers & key.MOD_SHIFT:
+                self._apply_to_texture_geometries(lambda geom: geom.set_render_phong_shading(True))
+            elif modifiers & key.MOD_CTRL:
+                self._apply_to_texture_geometries(lambda geom: geom.set_render_phong_shading(False))
+        elif symbol == key.N:
+            if modifiers & key.MOD_SHIFT:
+                self._apply_to_texture_geometries(lambda geom: geom.set_render_camera_space_normal(True))
+            elif modifiers & key.MOD_CTRL:
+                self._apply_to_texture_geometries(lambda geom: geom.set_render_camera_space_normal(False))
+            else:
+                self._apply_to_texture_geometries(lambda geom: geom.set_shader_mode(geometry.TextureMesh.SHADER_MODE_NORMAL))
+            return True
+        elif symbol == key.R:
+            self._apply_to_texture_geometries(lambda geom: geom.set_shader_mode(geometry.TextureMesh.SHADER_MODE_NORMAL_RAW))
+            return True
+        elif symbol == key.T:
+            self._apply_to_texture_geometries(lambda geom: geom.set_shader_mode(geometry.TextureMesh.SHADER_MODE_TEXTURE))
+            return True
+        elif symbol == key.U:
+            self._apply_to_texture_geometries(lambda geom: geom.set_shader_mode(geometry.TextureMesh.SHADER_MODE_UNIFORM))
+            return True
+        elif symbol == key.C:
+            self._apply_to_texture_geometries(lambda geom: geom.set_shader_mode(geometry.TextureMesh.SHADER_MODE_COLOR))
             return True
 
     def get_background_color(self):
@@ -189,6 +261,11 @@ class PygletSceneViewer(PygletViewer):
     def render(self, camera=None, show_fps=True, draw_axis=True, process_events=True, flip=True):
         if camera is None:
             camera = self._trackball
+        for flag, enabled in self._gl_flags.items():
+            if enabled:
+                self._ctx.enable(flag)
+            else:
+                self._ctx.disable(flag)
         self._ctx.viewport = (0, 0, self._window.width, self._window.height)
         self._ctx.clear(*self._background_color)
         for graph in self._scenes_graphs:
